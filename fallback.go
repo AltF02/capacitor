@@ -12,14 +12,14 @@ const (
 	FallbackFailClosed
 )
 
-func WithFallback(fs FallbackStrategy) Option {
-	return func(c *Capacitor) { c.fallback = fs }
+func WithFallback(s FallbackStrategy) Option {
+	return func(c *Capacitor) { c.fallback = s }
 }
 
 // fallbackResult returns a degraded result based on the configured strategy.
 
 func (c *Capacitor) fallbackResult() Result {
-	if s.fallback == FallbackFailOpen {
+	if c.fallback == FallbackFailOpen {
 		return Result{Allowed: true, Remaining: 0, Limit: c.config.Capacity}
 	}
 
