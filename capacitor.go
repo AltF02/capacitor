@@ -79,7 +79,7 @@ func (s *Capacitor) Attempt(ctx context.Context, uid string) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.config.Timeout)
 	defer cancel()
 
-	key := s.config.KeyPrefix + ":" + uid
+	key := s.config.KeyPrefix + ":uid:" + uid
 	now := float64(time.Now().UnixMilli()) / 1000.0
 
 	args := []string{

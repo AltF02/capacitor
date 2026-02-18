@@ -11,9 +11,9 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Capacity:  10,
-		LeakRate:  2, // 2 req/sec leak rate
-		KeyPrefix: "ratelimit:leaky",
-		Timeout:   50 * time.Millisecond, // Aggressive timeout for fail-fast
+		Capacity:  20,
+		LeakRate:  5, // 5 req/sec leak rate
+		KeyPrefix: "capacitor",
+		Timeout:   50 * time.Millisecond,
 	}
 }
