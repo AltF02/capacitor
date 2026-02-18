@@ -42,9 +42,8 @@ func main() {
 	}
 
 	limiter := capacitor.New(client, capacitor.Config{
-		KeyPrefix: "rl",
 		Capacity:  10,
-		LeakRate:  1.0, // 1 token per second
+		LeakRate:  1, // 1 token per second
 		Timeout:   500 * time.Millisecond,
 	})
 	defer limiter.Close()
@@ -65,7 +64,7 @@ func main() {
 
 | Field | Type | Description |
 |---|---|---|
-| `KeyPrefix` | `string` | Prefix for Valkey keys (e.g. `"rl"` → `rl:<uid>`) |
+| `KeyPrefix` | `string` | Prefix for Valkey keys (e.g. `"capacitor"` → `capacitor:uid:<uid>`) |
 | `Capacity` | `int64` | Maximum tokens in the bucket |
 | `LeakRate` | `float64` | Tokens drained per second |
 | `Timeout` | `time.Duration` | Per-call Valkey timeout |
