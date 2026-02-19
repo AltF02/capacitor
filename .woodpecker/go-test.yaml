@@ -1,0 +1,9 @@
+when:
+  - event: push
+
+steps:
+  - name: test
+    image: nixos/nix
+    commands:
+      - echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+      - nix develop -c go test -v ./...
