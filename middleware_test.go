@@ -107,7 +107,7 @@ func TestMiddleware(t *testing.T) {
 			expectedStatus: http.StatusOK,
 			expectedBody:   "OK",
 			expectedHeaders: map[string]string{
-				"RateLimit-Limit":     "10",
+				"RateLimit-Limit":     "20",
 				"RateLimit-Remaining": "9",
 			},
 		},
@@ -119,7 +119,7 @@ func TestMiddleware(t *testing.T) {
 			expectedStatus: http.StatusTooManyRequests,
 			expectedBody:   "Too Many Requests\n",
 			expectedHeaders: map[string]string{
-				"RateLimit-Limit":     "10",
+				"RateLimit-Limit":     "20",
 				"RateLimit-Remaining": "0",
 				"RateLimit-Reset":     "1",
 				"Retry-After":         "1",
@@ -177,7 +177,7 @@ func TestMiddleware(t *testing.T) {
 				client.EXPECT().
 					Do(gomock.Any(), gomock.Any()).
 					Return(mock.Result(mock.ValkeyArray(
-						mock.ValkeyInt64(boolConv(c.allowed)),
+						mock.ValkeyInt64(btoi(c.allowed)),
 						mock.ValkeyInt64(int64(c.remaining)),
 					)))
 			}

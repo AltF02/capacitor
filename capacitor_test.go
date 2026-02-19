@@ -40,7 +40,7 @@ func TestAttempt(t *testing.T) {
 			expectedResult: capacitor.Result{
 				Allowed:   true,
 				Remaining: 9,
-				Limit:     10,
+				Limit:     20,
 			},
 		},
 		"request denied": {
@@ -51,7 +51,7 @@ func TestAttempt(t *testing.T) {
 			expectedResult: capacitor.Result{
 				Allowed:    false,
 				Remaining:  0,
-				Limit:      10,
+				Limit:      20,
 				RetryAfter: 1 * time.Second,
 			},
 		},
@@ -66,7 +66,7 @@ func TestAttempt(t *testing.T) {
 				client.EXPECT().
 					Do(gomock.Any(), gomock.Any()).
 					Return(mock.Result(mock.ValkeyArray(
-						mock.ValkeyInt64(boolConv(c.allowed)),
+						mock.ValkeyInt64(btoi(c.allowed)),
 						mock.ValkeyInt64(int64(c.remaining)),
 					)))
 			}
@@ -97,7 +97,7 @@ func TestAttempt_Fallback(t *testing.T) {
 			expectedResult: capacitor.Result{
 				Allowed:   true,
 				Remaining: 0,
-				Limit:     10,
+				Limit:     20,
 			},
 		},
 		"fail closed on valkey error": {
@@ -105,7 +105,7 @@ func TestAttempt_Fallback(t *testing.T) {
 			expectedResult: capacitor.Result{
 				Allowed:    false,
 				Remaining:  0,
-				Limit:      10,
+				Limit:      20,
 				RetryAfter: 1 * time.Second,
 			},
 		},
@@ -174,7 +174,7 @@ func TestAttempt_Metrics(t *testing.T) {
 			client.EXPECT().
 				Do(gomock.Any(), gomock.Any()).
 				Return(mock.Result(mock.ValkeyArray(
-					mock.ValkeyInt64(boolConv(c.allowed)),
+					mock.ValkeyInt64(btoi(c.allowed)),
 					mock.ValkeyInt64(int64(c.remaining)),
 				)))
 
@@ -199,6 +199,6 @@ func TestAttempt_Metrics(t *testing.T) {
 }
 
 // https://dev.to/chigbeef_77/bool-int-but-stupid-in-go-3jb3
-func boolConv(b bool) int64 {
+func btoi(b bool) int64 {
 	return int64(*(*byte)(unsafe.Pointer(&b)))
 }
