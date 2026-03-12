@@ -182,7 +182,8 @@ func TestMiddleware(t *testing.T) {
 					)))
 			}
 
-			limiter := capacitor.New(client, cfg, capacitor.WithLogger(slog.Default()))
+			store := capacitor.NewValkeyStore(client, cfg)
+			limiter := capacitor.New(store, cfg, capacitor.WithLogger(slog.Default()))
 			handler := capacitor.NewMiddleware(limiter, c.opts...)(next)
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)

@@ -71,7 +71,8 @@ func TestAttempt(t *testing.T) {
 					)))
 			}
 
-			cap := capacitor.New(client, cfg)
+			store := capacitor.NewValkeyStore(client, cfg)
+			cap := capacitor.New(store, cfg)
 			actualRes, err := cap.Attempt(context.Background(), c.uid)
 
 			if !errors.Is(err, c.expectedErr) {
@@ -120,7 +121,8 @@ func TestAttempt_Fallback(t *testing.T) {
 				Do(gomock.Any(), gomock.Any()).
 				Return(mock.Result(mock.ValkeyError("ERR test error")))
 
-			cap := capacitor.New(client, cfg,
+			store := capacitor.NewValkeyStore(client, cfg)
+			cap := capacitor.New(store, cfg,
 				capacitor.WithFallback(c.fallback),
 				capacitor.WithLogger(slog.Default()),
 			)
@@ -179,7 +181,8 @@ func TestAttempt_Metrics(t *testing.T) {
 				)))
 
 			mMock := &metricsMock{}
-			s := capacitor.New(client, cfg, capacitor.WithMetrics(mMock))
+			store := capacitor.NewValkeyStore(client, cfg)
+			s := capacitor.New(store, cfg, capacitor.WithMetrics(mMock))
 			_, err := s.Attempt(context.Background(), c.uid)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
