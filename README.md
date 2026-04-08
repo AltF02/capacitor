@@ -9,6 +9,7 @@ A leaky-bucket rate limiter for Go, backed by [Valkey](https://valkey.io). Atomi
 - Configurable key extraction (IP, header, custom function)
 - [IETF RateLimit header fields](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/) on every response
 - Fallback strategy when Valkey is unreachable (fail-open or fail-closed)
+- Per-profile rate limits with configurable request-to-profile mapping
 - Optional structured logging (`log/slog`) and metrics collection
 
 ## Installation
@@ -125,6 +126,40 @@ Every response includes standard rate-limit headers:
 | `RateLimit-Remaining` | Tokens remaining |
 | `RateLimit-Reset` | Seconds until a token becomes available (denied requests only) |
 | `Retry-After` | Same value as `RateLimit-Reset` (denied requests only) |
+
+## Per-Profile Rate Limits
+
+Use `WithProfiles` and `WithProfileFunc` to apply different rate limits based on an arbitrary per-request categorization (plan, tier, user type, etc.):
+
+```go
+profiles := capacitor.ProfileConfig{
+    "basic": {
+        Capacity:  10,
+        LeakRate:  1,
+        KeyPrefix: "capacitor",
+        Timeout:   50 * time.Millisecond,
+    },
+    "premium": {
+        Capacity:  100,
+        LeakRate:  10,
+        KeyPrefix: "capacitor",
+        Timeout:   50 * time.Millisecond,
+    },
+}
+
+rl := capacitor.NewMiddleware(limiter,
+    capacitor.WithProfiles(profiles),
+    capacitor.WithProfileFunc(func(r *http.Request) string {
+        return r.Header.Get("X-Plan") // e.g. "basic" or "premium"
+    }),
+)
+```
+
+- Each profile creates an independent limiter sharing the same Valkey client
+- If `ProfileFunc` returns `""` or a name not in `ProfileConfig`, the default limiter is used
+- Key prefixes are auto-namespaced per profile (`capacitor:profile:premium:uid:<uid>`) to prevent collisions
+- The default limiter keeps its original key format (`capacitor:uid:<uid>`) — no migration needed
+- Omit `WithProfiles` entirely for single-global-limit behavior
 
 ## Direct Usage (Without Middleware)
 

@@ -9,6 +9,9 @@ import (
 // KeyFunc extracts the rate-limit key from an incoming request.
 type KeyFunc func(r *http.Request) string
 
+// ProfileFunc extracts the rate-limit profile from an incoming request.
+type ProfileFunc func(r *http.Request) string
+
 // MiddlewareOption configures the HTTP middleware.
 type MiddlewareOption func(*mw)
 
@@ -16,6 +19,8 @@ type mw struct {
 	limiter     *Capacitor
 	keyFunc     KeyFunc
 	denyHandler http.Handler
+	profiles    map[string]*Capacitor
+	profileFunc ProfileFunc
 }
 
 // WithKeyFunc sets the function used to derive the rate-limit key.
@@ -27,6 +32,45 @@ func WithKeyFunc(fn KeyFunc) MiddlewareOption {
 // WithDenyHandler replaces the default 429 response handler.
 func WithDenyHandler(h http.Handler) MiddlewareOption {
 	return func(m *mw) { m.denyHandler = h }
+}
+
+// WithProfiles configures per-profile limiters that share the base
+// limiter's Valkey client. Closing the base limiter closes all profiles.
+// Profile key prefixes are auto-namespaced with ":profile:<name>" to
+// prevent collisions. Unknown or empty profile names fall back to the
+// default limiter.
+func WithProfiles(profiles ProfileConfig) MiddlewareOption {
+	return func(m *mw) { m.profiles = makeProfileLimiters(m.limiter, profiles) }
+}
+
+// WithProfileFunc sets the function used to derive the rate-limit profile from a request.
+func WithProfileFunc(fn ProfileFunc) MiddlewareOption {
+	return func(m *mw) { m.profileFunc = fn }
+}
+
+func makeProfileLimiters(base *Capacitor, profiles ProfileConfig) map[string]*Capacitor {
+	if len(profiles) == 0 {
+		return nil
+	}
+
+	limiters := make(map[string]*Capacitor)
+
+	for name, cfg := range profiles {
+		profileCfg := cfg
+		profileCfg.KeyPrefix = cfg.KeyPrefix + ":profile:" + name
+
+		limiter := &Capacitor{
+			client:   base.client,
+			config:   profileCfg,
+			logger:   base.logger,
+			fallback: base.fallback,
+			metrics:  base.metrics,
+		}
+
+		limiters[name] = limiter
+	}
+
+	return limiters
 }
 
 // KeyFromRemoteIP extracts the IP from RemoteAddr, stripping the port.
@@ -66,10 +110,21 @@ func NewMiddleware(limiter *Capacitor, opts ...MiddlewareOption) func(http.Handl
 				return
 			}
 
-			result, err := m.limiter.Attempt(r.Context(), key)
+			selected := m.limiter
+			profileName := ""
+			if m.profileFunc != nil {
+				if p := m.profileFunc(r); p != "" {
+					if l, ok := m.profiles[p]; ok {
+						selected = l
+						profileName = p
+					}
+				}
+			}
+
+			result, err := selected.Attempt(r.Context(), key)
 			if err != nil {
-				m.limiter.logger.Warn("rate limiter degraded, using fallback",
-					"error", err, "key", key)
+				selected.logger.Warn("rate limiter degraded, using fallback",
+					"error", err, "key", key, "profile", profileName)
 			}
 
 			writeHeaders(w, result)

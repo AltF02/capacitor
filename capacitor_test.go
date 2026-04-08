@@ -131,7 +131,7 @@ func TestAttempt_Fallback(t *testing.T) {
 			}
 
 			if diff := cmp.Diff(c.expectedResult, actualRes); diff != "" {
-				t.Errorf("sleaky.Result mismatch (-want +got):\n%s", diff)
+				t.Errorf("capacitor.Result mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

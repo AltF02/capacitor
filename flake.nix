@@ -22,6 +22,7 @@
         nativeBuildInputs = with pkgs; [
           go_1_26
           clang
+          codeberg-cli
         ];
         buildInputs = with pkgs; [
           gopls
