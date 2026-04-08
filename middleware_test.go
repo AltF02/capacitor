@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"codeberg.org/matthew/capacitor"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/valkey-io/valkey-go/mock"
 	"go.uber.org/mock/gomock"
 )
@@ -95,6 +97,8 @@ func TestMiddleware(t *testing.T) {
 		remoteAddr      string
 		mockValkey      bool
 		opts            []capacitor.MiddlewareOption
+		headerKey       string
+		headerValue     string
 		expectedStatus  int
 		expectedBody    string
 		expectedHeaders map[string]string
@@ -160,6 +164,8 @@ func TestMiddleware(t *testing.T) {
 			opts: []capacitor.MiddlewareOption{
 				capacitor.WithKeyFunc(capacitor.KeyFromHeader("X-API-Key")),
 			},
+			headerKey:      "X-API-Key",
+			headerValue:    "test-key",
 			expectedStatus: http.StatusOK,
 			expectedBody:   "OK",
 			expectedHeaders: map[string]string{
@@ -187,23 +193,199 @@ func TestMiddleware(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
 			req.RemoteAddr = c.remoteAddr
-			if name == "custom key func" {
-				req.Header.Set("X-API-Key", "test-key")
+			if c.headerKey != "" {
+				req.Header.Set(c.headerKey, c.headerValue)
 			}
 			rec := httptest.NewRecorder()
 
 			handler.ServeHTTP(rec, req)
 
-			if rec.Code != c.expectedStatus {
-				t.Errorf("status = %d, want %d", rec.Code, c.expectedStatus)
+			if diff := cmp.Diff(c.expectedStatus, rec.Code); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s", diff)
 			}
-			if got := rec.Body.String(); got != c.expectedBody {
-				t.Errorf("body = %q, want %q", got, c.expectedBody)
+			if diff := cmp.Diff(c.expectedBody, rec.Body.String()); diff != "" {
+				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
-			for k, want := range c.expectedHeaders {
-				if got := rec.Header().Get(k); got != want {
-					t.Errorf("header %q = %q, want %q", k, got, want)
+			if len(c.expectedHeaders) > 0 {
+				gotHeaders := make(map[string]string, len(c.expectedHeaders))
+				for k := range c.expectedHeaders {
+					gotHeaders[k] = rec.Header().Get(k)
 				}
+				if diff := cmp.Diff(c.expectedHeaders, gotHeaders); diff != "" {
+					t.Errorf("headers mismatch (-want +got):\n%s", diff)
+				}
+			}
+		})
+	}
+}
+
+func TestWithProfiles(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	testProfiles := capacitor.ProfileConfig{
+		"basic": {
+			Capacity:  5,
+			LeakRate:  1,
+			KeyPrefix: "capacitor",
+			Timeout:   50 * time.Millisecond,
+		},
+		"premium": {
+			Capacity:  100,
+			LeakRate:  10,
+			KeyPrefix: "capacitor",
+			Timeout:   50 * time.Millisecond,
+		},
+	}
+
+	cases := map[string]struct {
+		profile         string
+		allowed         bool
+		remaining       int
+		remoteAddr      string
+		useProfiles     bool
+		useClassifier   bool
+		expectedStatus  int
+		expectedHeaders map[string]string
+	}{
+		"profile selects matching limiter": {
+			profile:        "premium",
+			allowed:        true,
+			remaining:      49,
+			remoteAddr:     "10.0.0.1:1234",
+			useProfiles:    true,
+			useClassifier:  true,
+			expectedStatus: http.StatusOK,
+			expectedHeaders: map[string]string{
+				"RateLimit-Limit":     "100",
+				"RateLimit-Remaining": "49",
+			},
+		},
+		"unknown profile falls back to default": {
+			profile:        "enterprise",
+			allowed:        true,
+			remaining:      9,
+			remoteAddr:     "10.0.0.1:1234",
+			useProfiles:    true,
+			useClassifier:  true,
+			expectedStatus: http.StatusOK,
+			expectedHeaders: map[string]string{
+				"RateLimit-Limit":     "20",
+				"RateLimit-Remaining": "9",
+			},
+		},
+		"empty profile falls back to default": {
+			profile:        "",
+			allowed:        true,
+			remaining:      15,
+			remoteAddr:     "10.0.0.1:1234",
+			useProfiles:    true,
+			useClassifier:  true,
+			expectedStatus: http.StatusOK,
+			expectedHeaders: map[string]string{
+				"RateLimit-Limit":     "20",
+				"RateLimit-Remaining": "15",
+			},
+		},
+		"no classifier uses default limiter": {
+			profile:        "premium",
+			allowed:        true,
+			remaining:      9,
+			remoteAddr:     "10.0.0.1:1234",
+			useProfiles:    true,
+			useClassifier:  false,
+			expectedStatus: http.StatusOK,
+			expectedHeaders: map[string]string{
+				"RateLimit-Limit":     "20",
+				"RateLimit-Remaining": "9",
+			},
+		},
+		"without profiles behaves as before": {
+			profile:        "",
+			allowed:        true,
+			remaining:      9,
+			remoteAddr:     "10.0.0.1:1234",
+			useProfiles:    false,
+			useClassifier:  false,
+			expectedStatus: http.StatusOK,
+			expectedHeaders: map[string]string{
+				"RateLimit-Limit":     "20",
+				"RateLimit-Remaining": "9",
+			},
+		},
+		"denied profile request returns 429": {
+			profile:        "basic",
+			allowed:        false,
+			remaining:      0,
+			remoteAddr:     "10.0.0.1:1234",
+			useProfiles:    true,
+			useClassifier:  true,
+			expectedStatus: http.StatusTooManyRequests,
+			expectedHeaders: map[string]string{
+				"RateLimit-Limit":     "5",
+				"RateLimit-Remaining": "0",
+			},
+		},
+		"classifier without profiles uses default limiter": {
+			profile:        "premium",
+			allowed:        true,
+			remaining:      9,
+			remoteAddr:     "10.0.0.1:1234",
+			useProfiles:    false,
+			useClassifier:  true,
+			expectedStatus: http.StatusOK,
+			expectedHeaders: map[string]string{
+				"RateLimit-Limit":     "20",
+				"RateLimit-Remaining": "9",
+			},
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			client := mock.NewClient(ctrl)
+
+			cfg := capacitor.DefaultConfig()
+			limiter := capacitor.New(client, cfg, capacitor.WithLogger(slog.Default()))
+
+			var opts []capacitor.MiddlewareOption
+
+			if c.useProfiles {
+				opts = append(opts, capacitor.WithProfiles(testProfiles))
+			}
+			if c.useClassifier {
+				opts = append(opts,
+					capacitor.WithClassifier(func(_ *http.Request) string { return c.profile }),
+				)
+			}
+
+			client.EXPECT().
+				Do(gomock.Any(), gomock.Any()).
+				Return(mock.Result(mock.ValkeyArray(
+					mock.ValkeyInt64(btoi(c.allowed)),
+					mock.ValkeyInt64(int64(c.remaining)),
+				)))
+
+			handler := capacitor.NewMiddleware(limiter, opts...)(next)
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = c.remoteAddr
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if diff := cmp.Diff(c.expectedStatus, rec.Code); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s", diff)
+			}
+			gotHeaders := make(map[string]string, len(c.expectedHeaders))
+			for k := range c.expectedHeaders {
+				gotHeaders[k] = rec.Header().Get(k)
+			}
+			if diff := cmp.Diff(c.expectedHeaders, gotHeaders); diff != "" {
+				t.Errorf("headers mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
