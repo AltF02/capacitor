@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/internal/testutil"
 	"codeberg.org/matthew/capacitor/leakybucket"
 
 	"github.com/google/go-cmp/cmp"
@@ -184,7 +185,7 @@ func TestMiddleware(t *testing.T) {
 				client.EXPECT().
 					Do(gomock.Any(), gomock.Any()).
 					Return(mock.Result(mock.ValkeyArray(
-						mock.ValkeyInt64(btoi(c.allowed)),
+						mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 						mock.ValkeyInt64(int64(c.remaining)),
 					)))
 			}
@@ -368,7 +369,7 @@ func TestWithProfiles(t *testing.T) {
 			client.EXPECT().
 				Do(gomock.Any(), gomock.Any()).
 				Return(mock.Result(mock.ValkeyArray(
-					mock.ValkeyInt64(btoi(c.allowed)),
+					mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 					mock.ValkeyInt64(int64(c.remaining)),
 				)))
 

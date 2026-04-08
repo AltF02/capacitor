@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"testing"
 	"time"
-	"unsafe"
 
 	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/internal/testutil"
 	"codeberg.org/matthew/capacitor/leakybucket"
 
 	"github.com/google/go-cmp/cmp"
@@ -67,7 +67,7 @@ func TestAttempt(t *testing.T) {
 				client.EXPECT().
 					Do(gomock.Any(), gomock.Any()).
 					Return(mock.Result(mock.ValkeyArray(
-						mock.ValkeyInt64(btoi(c.allowed)),
+						mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 						mock.ValkeyInt64(int64(c.remaining)),
 					)))
 			}
@@ -175,40 +175,26 @@ func TestAttempt_Metrics(t *testing.T) {
 			client.EXPECT().
 				Do(gomock.Any(), gomock.Any()).
 				Return(mock.Result(mock.ValkeyArray(
-					mock.ValkeyInt64(btoi(c.allowed)),
+					mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 					mock.ValkeyInt64(int64(c.remaining)),
 				)))
 
-			mMock := &metricsMock{}
+			mMock := &testutil.MetricsMock{}
 			lim := leakybucket.New(client, cfg, capacitor.WithMetrics(mMock))
 			_, err := lim.Attempt(context.Background(), c.uid)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if diff := cmp.Diff(c.expectAttempts, mMock.attempts); diff != "" {
+			if diff := cmp.Diff(c.expectAttempts, mMock.Attempts); diff != "" {
 				t.Errorf("attempts mismatch (-want +got):\n%s", diff)
 			}
-			if diff := cmp.Diff(c.expectDenied, mMock.denied); diff != "" {
+			if diff := cmp.Diff(c.expectDenied, mMock.Denied); diff != "" {
 				t.Errorf("denied mismatch (-want +got):\n%s", diff)
 			}
-			if mMock.latencies != c.expectLatencies {
-				t.Errorf("latencies = %d, want %d", mMock.latencies, c.expectLatencies)
+			if mMock.Latencies != c.expectLatencies {
+				t.Errorf("latencies = %d, want %d", mMock.Latencies, c.expectLatencies)
 			}
 		})
 	}
-}
-
-type metricsMock struct {
-	attempts  []string
-	denied    []string
-	latencies int
-}
-
-func (m *metricsMock) RecordAttempt(key string)      { m.attempts = append(m.attempts, key) }
-func (m *metricsMock) RecordDenied(key string)       { m.denied = append(m.denied, key) }
-func (m *metricsMock) RecordLatency(_ time.Duration) { m.latencies++ }
-
-func btoi(b bool) int64 {
-	return int64(*(*byte)(unsafe.Pointer(&b)))
 }

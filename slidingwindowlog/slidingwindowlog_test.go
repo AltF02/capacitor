@@ -1,4 +1,4 @@
-package capacitor_test
+package slidingwindowlog_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 
 	"codeberg.org/matthew/capacitor"
 	"codeberg.org/matthew/capacitor/internal/testutil"
-	"codeberg.org/matthew/capacitor/leakybucket"
+	"codeberg.org/matthew/capacitor/slidingwindowlog"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/valkey-io/valkey-go/mock"
@@ -17,12 +17,13 @@ import (
 )
 
 func TestAttempt(t *testing.T) {
-	cfg := leakybucket.DefaultConfig()
+	cfg := slidingwindowlog.DefaultConfig()
 
 	cases := map[string]struct {
 		uid            string
 		allowed        bool
 		remaining      int
+		retryAfter     int
 		mockValkey     bool
 		expectedResult capacitor.Result
 		expectedErr    error
@@ -36,24 +37,26 @@ func TestAttempt(t *testing.T) {
 		"request allowed": {
 			uid:        "user:1",
 			allowed:    true,
-			remaining:  9,
+			remaining:  99,
+			retryAfter: 0,
 			mockValkey: true,
 			expectedResult: capacitor.Result{
 				Allowed:   true,
-				Remaining: 9,
-				Limit:     20,
+				Remaining: 99,
+				Limit:     100,
 			},
 		},
 		"request denied": {
 			uid:        "user:1",
 			allowed:    false,
 			remaining:  0,
+			retryAfter: 45,
 			mockValkey: true,
 			expectedResult: capacitor.Result{
 				Allowed:    false,
 				Remaining:  0,
-				Limit:      20,
-				RetryAfter: 1 * time.Second,
+				Limit:      100,
+				RetryAfter: 45 * time.Second,
 			},
 		},
 	}
@@ -69,10 +72,11 @@ func TestAttempt(t *testing.T) {
 					Return(mock.Result(mock.ValkeyArray(
 						mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 						mock.ValkeyInt64(int64(c.remaining)),
+						mock.ValkeyInt64(int64(c.retryAfter)),
 					)))
 			}
 
-			lim := leakybucket.New(client, cfg)
+			lim := slidingwindowlog.New(client, cfg)
 			actualRes, err := lim.Attempt(context.Background(), c.uid)
 
 			if !errors.Is(err, c.expectedErr) {
@@ -87,7 +91,7 @@ func TestAttempt(t *testing.T) {
 }
 
 func TestAttempt_Fallback(t *testing.T) {
-	cfg := leakybucket.DefaultConfig()
+	cfg := slidingwindowlog.DefaultConfig()
 
 	cases := map[string]struct {
 		fallback       capacitor.FallbackStrategy
@@ -98,7 +102,7 @@ func TestAttempt_Fallback(t *testing.T) {
 			expectedResult: capacitor.Result{
 				Allowed:   true,
 				Remaining: 0,
-				Limit:     20,
+				Limit:     100,
 			},
 		},
 		"fail closed on valkey error": {
@@ -106,8 +110,8 @@ func TestAttempt_Fallback(t *testing.T) {
 			expectedResult: capacitor.Result{
 				Allowed:    false,
 				Remaining:  0,
-				Limit:      20,
-				RetryAfter: 1 * time.Second,
+				Limit:      100,
+				RetryAfter: 60 * time.Second,
 			},
 		},
 	}
@@ -121,7 +125,7 @@ func TestAttempt_Fallback(t *testing.T) {
 				Do(gomock.Any(), gomock.Any()).
 				Return(mock.Result(mock.ValkeyError("ERR test error")))
 
-			lim := leakybucket.New(client, cfg,
+			lim := slidingwindowlog.New(client, cfg,
 				capacitor.WithFallback(c.fallback),
 				capacitor.WithLogger(slog.Default()),
 			)
@@ -139,12 +143,13 @@ func TestAttempt_Fallback(t *testing.T) {
 }
 
 func TestAttempt_Metrics(t *testing.T) {
-	cfg := leakybucket.DefaultConfig()
+	cfg := slidingwindowlog.DefaultConfig()
 
 	cases := map[string]struct {
 		uid             string
 		allowed         bool
 		remaining       int
+		retryAfter      int
 		expectAttempts  []string
 		expectDenied    []string
 		expectLatencies int
@@ -152,7 +157,8 @@ func TestAttempt_Metrics(t *testing.T) {
 		"allowed records attempt and latency": {
 			uid:             "user:1",
 			allowed:         true,
-			remaining:       9,
+			remaining:       99,
+			retryAfter:      0,
 			expectAttempts:  []string{"user:1"},
 			expectDenied:    nil,
 			expectLatencies: 1,
@@ -161,6 +167,7 @@ func TestAttempt_Metrics(t *testing.T) {
 			uid:             "user:2",
 			allowed:         false,
 			remaining:       0,
+			retryAfter:      45,
 			expectAttempts:  []string{"user:2"},
 			expectDenied:    []string{"user:2"},
 			expectLatencies: 1,
@@ -177,10 +184,11 @@ func TestAttempt_Metrics(t *testing.T) {
 				Return(mock.Result(mock.ValkeyArray(
 					mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 					mock.ValkeyInt64(int64(c.remaining)),
+					mock.ValkeyInt64(int64(c.retryAfter)),
 				)))
 
 			mMock := &testutil.MetricsMock{}
-			lim := leakybucket.New(client, cfg, capacitor.WithMetrics(mMock))
+			lim := slidingwindowlog.New(client, cfg, capacitor.WithMetrics(mMock))
 			_, err := lim.Attempt(context.Background(), c.uid)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
