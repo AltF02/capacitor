@@ -8,8 +8,3 @@ type MetricsCollector interface {
 	RecordDenied(key string)
 	RecordLatency(d time.Duration)
 }
-
-// WithMetrics enables telemetry recording via the given collector.
-func WithMetrics(m MetricsCollector) Option {
-	return func(c *Capacitor) { c.metrics = m }
-}

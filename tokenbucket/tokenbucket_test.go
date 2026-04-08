@@ -1,4 +1,4 @@
-package capacitor_test
+package tokenbucket_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 
 	"codeberg.org/matthew/capacitor"
 	"codeberg.org/matthew/capacitor/internal/testutil"
-	"codeberg.org/matthew/capacitor/leakybucket"
+	"codeberg.org/matthew/capacitor/tokenbucket"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/valkey-io/valkey-go/mock"
@@ -17,7 +17,7 @@ import (
 )
 
 func TestAttempt(t *testing.T) {
-	cfg := leakybucket.DefaultConfig()
+	cfg := tokenbucket.DefaultConfig()
 
 	cases := map[string]struct {
 		uid            string
@@ -37,12 +37,12 @@ func TestAttempt(t *testing.T) {
 		"request allowed": {
 			uid:        "user:1",
 			allowed:    true,
-			remaining:  9,
+			remaining:  18,
 			retryAfter: 0,
 			mockValkey: true,
 			expectedResult: capacitor.Result{
 				Allowed:   true,
-				Remaining: 9,
+				Remaining: 18,
 				Limit:     20,
 			},
 		},
@@ -76,7 +76,7 @@ func TestAttempt(t *testing.T) {
 					)))
 			}
 
-			lim := leakybucket.New(client, cfg)
+			lim := tokenbucket.New(client, cfg)
 			actualRes, err := lim.Attempt(context.Background(), c.uid)
 
 			if !errors.Is(err, c.expectedErr) {
@@ -91,7 +91,7 @@ func TestAttempt(t *testing.T) {
 }
 
 func TestAttempt_Fallback(t *testing.T) {
-	cfg := leakybucket.DefaultConfig()
+	cfg := tokenbucket.DefaultConfig()
 
 	cases := map[string]struct {
 		fallback       capacitor.FallbackStrategy
@@ -125,7 +125,7 @@ func TestAttempt_Fallback(t *testing.T) {
 				Do(gomock.Any(), gomock.Any()).
 				Return(mock.Result(mock.ValkeyError("ERR test error")))
 
-			lim := leakybucket.New(client, cfg,
+			lim := tokenbucket.New(client, cfg,
 				capacitor.WithFallback(c.fallback),
 				capacitor.WithLogger(slog.Default()),
 			)
@@ -143,7 +143,7 @@ func TestAttempt_Fallback(t *testing.T) {
 }
 
 func TestAttempt_Metrics(t *testing.T) {
-	cfg := leakybucket.DefaultConfig()
+	cfg := tokenbucket.DefaultConfig()
 
 	cases := map[string]struct {
 		uid             string
@@ -157,7 +157,7 @@ func TestAttempt_Metrics(t *testing.T) {
 		"allowed records attempt and latency": {
 			uid:             "user:1",
 			allowed:         true,
-			remaining:       9,
+			remaining:       18,
 			retryAfter:      0,
 			expectAttempts:  []string{"user:1"},
 			expectDenied:    nil,
@@ -188,7 +188,7 @@ func TestAttempt_Metrics(t *testing.T) {
 				)))
 
 			mMock := &testutil.MetricsMock{}
-			lim := leakybucket.New(client, cfg, capacitor.WithMetrics(mMock))
+			lim := tokenbucket.New(client, cfg, capacitor.WithMetrics(mMock))
 			_, err := lim.Attempt(context.Background(), c.uid)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

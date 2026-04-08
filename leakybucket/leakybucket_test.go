@@ -1,4 +1,4 @@
-package capacitor_test
+package leakybucket_test
 
 import (
 	"context"

@@ -1,11 +1,12 @@
 # Capacitor
 
-A leaky-bucket rate limiter for Go, backed by [Valkey](https://valkey.io). Atomic bucket logic runs server-side via a Lua script, making it safe for distributed deployments. Ships with drop-in `net/http` middleware.
+A rate-limiting library for Go, backed by [Valkey](https://valkey.io). Atomic limiting logic runs server-side via Lua scripts, making it safe for distributed deployments. Ships with drop-in `net/http` middleware.
 
 ## Features
 
-- Atomic leaky-bucket algorithm executed in a single Valkey round-trip
-- Standard `func(http.Handler) http.Handler` middleware — works with `http.ServeMux`, chi, gorilla/mux, and any `http.Handler`-based router
+- 5 rate-limiting algorithms: leaky bucket, fixed window, token bucket, sliding window counter, sliding window log
+- All algorithms execute atomically in a single Valkey round-trip via Lua scripts
+- Standard `func(http.Handler) http.Handler` middleware, works with any `http.Handler`-based router
 - Configurable key extraction (IP, header, custom function)
 - [IETF RateLimit header fields](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/) on every response
 - Fallback strategy when Valkey is unreachable (fail-open or fail-closed)
@@ -20,6 +21,36 @@ go get codeberg.org/matthew/capacitor
 
 Requires Go 1.22+ and a running Valkey (or Redis 7+) instance.
 
+## Algorithms
+
+The algorithms and Lua scripts in Capacitor follow the patterns described in the [Redis rate limiting tutorial](https://redis.io/tutorials/howtos/ratelimiting/), which covers the tradeoffs between all five approaches in depth.
+
+| Package | Algorithm | Best for | Valkey data structure | Accuracy |
+|---|---|---|---|---|
+| `leakybucket` | Leaky bucket (policing) | Strict no-burst, constant drain | HASH (level + last_leak) | Exact |
+| `fixedwindow` | Fixed-window counter | Simple, low overhead | STRING (INCR + EXPIRE) | Approximate |
+| `tokenbucket` | Token bucket | Controlled bursts with steady average rate | HASH (tokens + last_refill) | Exact |
+| `slidingwindowcounter` | Sliding-window counter | Near-exact accuracy with low memory | STRING x2 (weighted avg) | Near-exact |
+| `slidingwindowlog` | Sliding-window log | True rolling window, exact counting | SORTED SET | Exact |
+
+### Choosing an Algorithm
+
+Start with the sliding window counter if you are unsure. It handles most API rate limiting scenarios well: low memory, near-exact accuracy, and no boundary bursts. It is the best default choice for distributed rate limiting.
+
+- **Fixed window** counts requests in discrete time windows. Minimal Valkey overhead (one key per window), but susceptible to boundary bursts: a client could send the full limit at the end of one window and the full limit at the start of the next, doubling throughput for a brief period. Good for login throttling and simple API limits where approximate enforcement is acceptable.
+- **Sliding window log** records the exact timestamp of every request in a sorted set, providing a true rolling window with no boundary bursts. Memory grows linearly with request volume (O(n) entries per client). Best for high-value APIs, payment processing, and any scenario where you need exact counts and can afford the memory cost.
+- **Sliding window counter** blends two fixed-window counters using a weighted average to approximate a true sliding window. Offers near-exact accuracy with the same low memory footprint as fixed window. The two keys use [Redis cluster hash tags](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#hash-tags) so they always land on the same cluster slot.
+- **Token bucket** allows controlled bursts up to bucket capacity while enforcing a steady average rate over time. Tokens accumulate over time; each request consumes one. Ideal for APIs with naturally bursty traffic patterns (e.g. mobile apps that batch requests on launch).
+- **Leaky bucket** (policing mode) provides strict no-burst behavior. A counter tracks the fill level and drains at a constant rate; requests that would exceed capacity are rejected immediately. Best when your downstream service cannot handle any spikes at all. Note: this is the policing variant only (immediate allow/deny); shaping mode (delayed queue drain) is not implemented.
+
+### Why Lua Scripts?
+
+Every algorithm executes a Lua script via `EVAL` for atomic read-modify-write. Without atomicity, concurrent requests can read the same state, both pass the limit check, and both write back, bypassing the limit. This is a TOCTOU (time-of-check-time-of-use) race condition that matters most under the high-concurrency conditions where rate limiting is critical.
+
+Alternatives like `MULTI/EXEC` cannot branch on intermediate results, and `WATCH`/`MULTI`/`EXEC` requires retries on every concurrent write, which is the worst behavior for a rate limiter. Lua scripts always complete on the first attempt in a single round trip with no contention.
+
+See the [Redis tutorial on why Lua scripts](https://redis.io/tutorials/howtos/ratelimiting/#why-lua-scripts) for a detailed comparison.
+
 ## Quick Start
 
 ```go
@@ -32,6 +63,7 @@ import (
 
 	"github.com/valkey-io/valkey-go"
 	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/leakybucket"
 )
 
 func main() {
@@ -42,9 +74,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	limiter := capacitor.New(client, capacitor.Config{
+	limiter := leakybucket.New(client, leakybucket.Config{
 		Capacity:  10,
-		LeakRate:  1, // 1 token per second
+		LeakRate:  1,
 		Timeout:   500 * time.Millisecond,
 	})
 	defer limiter.Close()
@@ -61,14 +93,68 @@ func main() {
 }
 ```
 
+### Using Other Algorithms
+
+```go
+import (
+	"codeberg.org/matthew/capacitor/fixedwindow"
+	"codeberg.org/matthew/capacitor/tokenbucket"
+	"codeberg.org/matthew/capacitor/slidingwindowcounter"
+	"codeberg.org/matthew/capacitor/slidingwindowlog"
+)
+
+// Fixed window: 100 requests per minute
+fw := fixedwindow.New(client, fixedwindow.Config{
+	Limit:   100,
+	Window:  time.Minute,
+	Timeout: 50 * time.Millisecond,
+})
+
+// Token bucket: burst up to 20, refill 5/sec
+tb := tokenbucket.New(client, tokenbucket.Config{
+	Capacity:   20,
+	RefillRate: 5,
+	Timeout:    50 * time.Millisecond,
+})
+
+// Sliding window counter: 100 requests per minute (near-exact)
+swc := slidingwindowcounter.New(client, slidingwindowcounter.Config{
+	Limit:   100,
+	Window:  time.Minute,
+	Timeout: 50 * time.Millisecond,
+})
+
+// Sliding window log: 100 requests per minute (exact)
+swl := slidingwindowlog.New(client, slidingwindowlog.Config{
+	Limit:   100,
+	Window:  time.Minute,
+	Timeout: 50 * time.Millisecond,
+})
+```
+
 ## Configuration
+
+Each algorithm has its own `Config` struct:
+
+### Leaky Bucket / Token Bucket
 
 | Field | Type | Description |
 |---|---|---|
-| `KeyPrefix` | `string` | Prefix for Valkey keys (e.g. `"capacitor"` → `capacitor:uid:<uid>`) |
 | `Capacity` | `int64` | Maximum tokens in the bucket |
-| `LeakRate` | `float64` | Tokens drained per second |
+| `LeakRate` / `RefillRate` | `float64` | Tokens drained/refilled per second |
+| `KeyPrefix` | `string` | Prefix for Valkey keys |
 | `Timeout` | `time.Duration` | Per-call Valkey timeout |
+
+### Fixed Window / Sliding Window Counter / Sliding Window Log
+
+| Field | Type | Description |
+|---|---|---|
+| `Limit` | `int64` | Maximum requests per window |
+| `Window` | `time.Duration` | Window duration |
+| `KeyPrefix` | `string` | Prefix for Valkey keys |
+| `Timeout` | `time.Duration` | Per-call Valkey timeout |
+
+All config fields are validated in `New()`: zero or negative values panic (programmer errors).
 
 ## Middleware Options
 
@@ -77,7 +163,6 @@ func main() {
 Controls how the rate-limit key is derived from each request. Defaults to `KeyFromRemoteIP`.
 
 ```go
-// Rate-limit by API key header.
 rl := capacitor.NewMiddleware(limiter,
 	capacitor.WithKeyFunc(capacitor.KeyFromHeader("X-API-Key")),
 )
@@ -108,7 +193,7 @@ rl := capacitor.NewMiddleware(limiter,
 
 ## Limiter Options
 
-Pass these to `capacitor.New`:
+Pass these to any algorithm's `New()`:
 
 | Option | Description |
 |---|---|
@@ -122,9 +207,9 @@ Every response includes standard rate-limit headers:
 
 | Header | Description |
 |---|---|
-| `RateLimit-Limit` | Bucket capacity |
-| `RateLimit-Remaining` | Tokens remaining |
-| `RateLimit-Reset` | Seconds until a token becomes available (denied requests only) |
+| `RateLimit-Limit` | Bucket capacity / window limit |
+| `RateLimit-Remaining` | Tokens / requests remaining |
+| `RateLimit-Reset` | Seconds until a slot opens (denied requests only) |
 | `Retry-After` | Same value as `RateLimit-Reset` (denied requests only) |
 
 ## Per-Profile Rate Limits
@@ -133,33 +218,30 @@ Use `WithProfiles` and `WithClassifier` to apply different rate limits based on 
 
 ```go
 profiles := capacitor.ProfileConfig{
-    "basic": {
-        Capacity:  10,
-        LeakRate:  1,
-        KeyPrefix: "capacitor",
-        Timeout:   50 * time.Millisecond,
-    },
-    "premium": {
-        Capacity:  100,
-        LeakRate:  10,
-        KeyPrefix: "capacitor",
-        Timeout:   50 * time.Millisecond,
-    },
+	"basic":   leakybucket.New(client, leakybucket.Config{Capacity: 10, LeakRate: 1, Timeout: 50 * time.Millisecond}),
+	"premium": leakybucket.New(client, leakybucket.Config{Capacity: 100, LeakRate: 10, Timeout: 50 * time.Millisecond}),
 }
 
-rl := capacitor.NewMiddleware(limiter,
-    capacitor.WithProfiles(profiles),
-    capacitor.WithClassifier(func(r *http.Request) string {
-        return r.Header.Get("X-Plan") // e.g. "basic" or "premium"
-    }),
+rl := capacitor.NewMiddleware(defaultLimiter,
+	capacitor.WithProfiles(profiles),
+	capacitor.WithClassifier(func(r *http.Request) string {
+		return r.Header.Get("X-Plan")
+	}),
 )
 ```
 
-- Each profile creates an independent limiter sharing the same Valkey client
+- Each profile is a `capacitor.Capacitor`, use any algorithm or config
 - If the classifier returns `""` or a name not in `ProfileConfig`, the default limiter is used
-- Key prefixes are auto-namespaced per profile (`capacitor:profile:premium:uid:<uid>`) to prevent collisions
-- The default limiter keeps its original key format (`capacitor:uid:<uid>`) — no migration needed
 - Omit `WithProfiles` entirely for single-global-limit behavior
+
+### Mixing Algorithms Per Profile
+
+```go
+profiles := capacitor.ProfileConfig{
+	"basic":   fixedwindow.New(client, fixedwindow.Config{Limit: 10, Window: time.Minute, Timeout: 50 * time.Millisecond}),
+	"premium": tokenbucket.New(client, tokenbucket.Config{Capacity: 100, RefillRate: 10, Timeout: 50 * time.Millisecond}),
+}
+```
 
 ## Direct Usage (Without Middleware)
 
@@ -168,7 +250,7 @@ You can call the limiter directly for non-HTTP use cases such as background work
 ```go
 result, err := limiter.Attempt(ctx, "user:42")
 if err != nil {
-	// Valkey unreachable — result contains the fallback decision.
+	// Valkey unreachable: result contains the fallback decision.
 	log.Println("fallback used:", err)
 }
 
