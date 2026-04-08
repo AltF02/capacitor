@@ -23,6 +23,7 @@ func TestAttempt(t *testing.T) {
 		uid            string
 		allowed        bool
 		remaining      int
+		retryAfter     int
 		mockValkey     bool
 		expectedResult capacitor.Result
 		expectedErr    error
@@ -37,6 +38,7 @@ func TestAttempt(t *testing.T) {
 			uid:        "user:1",
 			allowed:    true,
 			remaining:  9,
+			retryAfter: 0,
 			mockValkey: true,
 			expectedResult: capacitor.Result{
 				Allowed:   true,
@@ -48,6 +50,7 @@ func TestAttempt(t *testing.T) {
 			uid:        "user:1",
 			allowed:    false,
 			remaining:  0,
+			retryAfter: 1,
 			mockValkey: true,
 			expectedResult: capacitor.Result{
 				Allowed:    false,
@@ -69,6 +72,7 @@ func TestAttempt(t *testing.T) {
 					Return(mock.Result(mock.ValkeyArray(
 						mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 						mock.ValkeyInt64(int64(c.remaining)),
+						mock.ValkeyInt64(int64(c.retryAfter)),
 					)))
 			}
 
@@ -145,6 +149,7 @@ func TestAttempt_Metrics(t *testing.T) {
 		uid             string
 		allowed         bool
 		remaining       int
+		retryAfter      int
 		expectAttempts  []string
 		expectDenied    []string
 		expectLatencies int
@@ -153,6 +158,7 @@ func TestAttempt_Metrics(t *testing.T) {
 			uid:             "user:1",
 			allowed:         true,
 			remaining:       9,
+			retryAfter:      0,
 			expectAttempts:  []string{"user:1"},
 			expectDenied:    nil,
 			expectLatencies: 1,
@@ -161,6 +167,7 @@ func TestAttempt_Metrics(t *testing.T) {
 			uid:             "user:2",
 			allowed:         false,
 			remaining:       0,
+			retryAfter:      1,
 			expectAttempts:  []string{"user:2"},
 			expectDenied:    []string{"user:2"},
 			expectLatencies: 1,
@@ -177,6 +184,7 @@ func TestAttempt_Metrics(t *testing.T) {
 				Return(mock.Result(mock.ValkeyArray(
 					mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 					mock.ValkeyInt64(int64(c.remaining)),
+					mock.ValkeyInt64(int64(c.retryAfter)),
 				)))
 
 			mMock := &testutil.MetricsMock{}

@@ -96,6 +96,7 @@ func TestMiddleware(t *testing.T) {
 	cases := map[string]struct {
 		allowed         bool
 		remaining       int
+		retryAfter      int
 		remoteAddr      string
 		mockValkey      bool
 		opts            []capacitor.MiddlewareOption
@@ -120,6 +121,7 @@ func TestMiddleware(t *testing.T) {
 		"denied request returns 429": {
 			allowed:        false,
 			remaining:      0,
+			retryAfter:     1,
 			remoteAddr:     "10.0.0.1:1234",
 			mockValkey:     true,
 			expectedStatus: http.StatusTooManyRequests,
@@ -187,6 +189,7 @@ func TestMiddleware(t *testing.T) {
 					Return(mock.Result(mock.ValkeyArray(
 						mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 						mock.ValkeyInt64(int64(c.remaining)),
+						mock.ValkeyInt64(int64(c.retryAfter)),
 					)))
 			}
 
@@ -231,6 +234,7 @@ func TestWithProfiles(t *testing.T) {
 		profile         string
 		allowed         bool
 		remaining       int
+		retryAfter      int
 		remoteAddr      string
 		useProfiles     bool
 		useClassifier   bool
@@ -371,6 +375,7 @@ func TestWithProfiles(t *testing.T) {
 				Return(mock.Result(mock.ValkeyArray(
 					mock.ValkeyInt64(testutil.Btoi(c.allowed)),
 					mock.ValkeyInt64(int64(c.remaining)),
+					mock.ValkeyInt64(int64(c.retryAfter)),
 				)))
 
 			handler := capacitor.NewMiddleware(defaultLimiter, opts...)(next)

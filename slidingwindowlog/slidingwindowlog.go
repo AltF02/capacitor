@@ -40,8 +40,19 @@ type limiter struct {
 	opts   capacitor.Options
 }
 
+var _ capacitor.Capacitor = (*limiter)(nil)
+
 // New creates a sliding-window log Capacitor backed by the given Valkey client.
 func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.Capacitor {
+	if cfg.Limit <= 0 {
+		panic("capacitor: slidingwindowlog: limit must be positive")
+	}
+	if cfg.Window <= 0 {
+		panic("capacitor: slidingwindowlog: window must be positive")
+	}
+	if cfg.Timeout <= 0 {
+		panic("capacitor: slidingwindowlog: timeout must be positive")
+	}
 	o := capacitor.DefaultOptions()
 	for _, opt := range opts {
 		opt(&o)
@@ -135,7 +146,9 @@ func (l *limiter) Close() {
 
 func randBytes() string {
 	b := make([]byte, 4)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d%x", time.Now().UnixNano(), b)
+	}
 	return fmt.Sprintf("%x", b)
 }
 

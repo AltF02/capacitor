@@ -6,7 +6,6 @@ package leakybucket
 import (
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"time"
 
@@ -28,7 +27,7 @@ func DefaultConfig() Config {
 	return Config{
 		Capacity:  20,
 		LeakRate:  5,
-		KeyPrefix: "capacitor",
+		KeyPrefix: "capacitor:leaky",
 		Timeout:   50 * time.Millisecond,
 	}
 }
@@ -39,8 +38,19 @@ type limiter struct {
 	opts   capacitor.Options
 }
 
+var _ capacitor.Capacitor = (*limiter)(nil)
+
 // New creates a leaky-bucket Capacitor backed by the given Valkey client.
 func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.Capacitor {
+	if cfg.Capacity <= 0 {
+		panic("capacitor: leakybucket: capacity must be positive")
+	}
+	if cfg.LeakRate <= 0 {
+		panic("capacitor: leakybucket: leak rate must be positive")
+	}
+	if cfg.Timeout <= 0 {
+		panic("capacitor: leakybucket: timeout must be positive")
+	}
 	o := capacitor.DefaultOptions()
 	for _, opt := range opts {
 		opt(&o)
@@ -83,10 +93,10 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		return capacitor.FallbackResult(l.opts.Fallback, l.config.Capacity, 1/l.config.LeakRate),
 			fmt.Errorf("capacitor: leakybucket: response: %w", err)
 	}
-	if len(arr) != 2 {
+	if len(arr) != 3 {
 		l.opts.Logger.Error("unexpected eval response length", "len", len(arr))
 		return capacitor.FallbackResult(l.opts.Fallback, l.config.Capacity, 1/l.config.LeakRate),
-			fmt.Errorf("%w: expected 2 elements, got %d", capacitor.ErrEvalResponse, len(arr))
+			fmt.Errorf("%w: expected 3 elements, got %d", capacitor.ErrEvalResponse, len(arr))
 	}
 
 	allowedInt, err := arr[0].ToInt64()
@@ -96,6 +106,10 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 	remaining, err := arr[1].ToInt64()
 	if err != nil {
 		return capacitor.Result{}, fmt.Errorf("capacitor: leakybucket: parse remaining: %w", err)
+	}
+	retryAfterSecs, err := arr[2].ToInt64()
+	if err != nil {
+		return capacitor.Result{}, fmt.Errorf("capacitor: leakybucket: parse retry_after: %w", err)
 	}
 
 	allowed := allowedInt == 1
@@ -111,16 +125,8 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		Allowed:    allowed,
 		Remaining:  remaining,
 		Limit:      l.config.Capacity,
-		RetryAfter: l.retryAfter(allowed),
+		RetryAfter: time.Duration(retryAfterSecs) * time.Second,
 	}, nil
-}
-
-func (l *limiter) retryAfter(allowed bool) time.Duration {
-	if allowed {
-		return 0
-	}
-	secs := math.Ceil(1 / l.config.LeakRate)
-	return time.Duration(secs) * time.Second
 }
 
 func (l *limiter) HealthCheck(ctx context.Context) error {
@@ -160,17 +166,21 @@ level = math.max(0, level - leaked)
 
 local allowed = 0
 local remaining = math.max(0, math.floor(capacity - level))
+local retry_after = 0
 
 if level + 1 <= capacity then
   level = level + 1
   remaining = math.max(0, math.floor(capacity - level))
   allowed = 1
+else
+  retry_after = math.ceil((level - capacity + 1) / leak_rate)
+  if retry_after < 1 then retry_after = 1 end
 end
 
 valkey.call('HSET', key, 'level', tostring(level), 'last_leak', tostring(now))
 valkey.call('EXPIRE', key, math.ceil(capacity / leak_rate) * 2)
 
-return { allowed, remaining }
+return { allowed, remaining, retry_after }
 `
 
 var leakyBucketScript = valkey.NewLuaScript(luaLeakyBucket)

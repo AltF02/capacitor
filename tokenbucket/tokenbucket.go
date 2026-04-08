@@ -39,8 +39,19 @@ type limiter struct {
 	opts   capacitor.Options
 }
 
+var _ capacitor.Capacitor = (*limiter)(nil)
+
 // New creates a token-bucket Capacitor backed by the given Valkey client.
 func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.Capacitor {
+	if cfg.Capacity <= 0 {
+		panic("capacitor: tokenbucket: capacity must be positive")
+	}
+	if cfg.RefillRate <= 0 {
+		panic("capacitor: tokenbucket: refill rate must be positive")
+	}
+	if cfg.Timeout <= 0 {
+		panic("capacitor: tokenbucket: timeout must be positive")
+	}
 	o := capacitor.DefaultOptions()
 	for _, opt := range opts {
 		opt(&o)
