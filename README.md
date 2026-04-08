@@ -129,7 +129,7 @@ Every response includes standard rate-limit headers:
 
 ## Per-Profile Rate Limits
 
-Use `WithProfiles` and `WithProfileFunc` to apply different rate limits based on an arbitrary per-request categorization (plan, tier, user type, etc.):
+Use `WithProfiles` and `WithClassifier` to apply different rate limits based on an arbitrary per-request categorization (plan, tier, user type, etc.):
 
 ```go
 profiles := capacitor.ProfileConfig{
@@ -149,14 +149,14 @@ profiles := capacitor.ProfileConfig{
 
 rl := capacitor.NewMiddleware(limiter,
     capacitor.WithProfiles(profiles),
-    capacitor.WithProfileFunc(func(r *http.Request) string {
+    capacitor.WithClassifier(func(r *http.Request) string {
         return r.Header.Get("X-Plan") // e.g. "basic" or "premium"
     }),
 )
 ```
 
 - Each profile creates an independent limiter sharing the same Valkey client
-- If `ProfileFunc` returns `""` or a name not in `ProfileConfig`, the default limiter is used
+- If the classifier returns `""` or a name not in `ProfileConfig`, the default limiter is used
 - Key prefixes are auto-namespaced per profile (`capacitor:profile:premium:uid:<uid>`) to prevent collisions
 - The default limiter keeps its original key format (`capacitor:uid:<uid>`) — no migration needed
 - Omit `WithProfiles` entirely for single-global-limit behavior

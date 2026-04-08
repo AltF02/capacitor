@@ -57,7 +57,7 @@ This is a single-package Go library (`package capacitor`). All source lives at t
 | `bucket.go` | Lua script for atomic leaky-bucket logic executed server-side in Valkey |
 | `fallback.go` | `FallbackStrategy` enum (`FallbackFailOpen`, `FallbackFailClosed`), `WithFallback` option |
 | `metrics.go` | `MetricsCollector` interface and `WithMetrics` option |
-| `middleware.go` | `net/http` middleware, `KeyFunc`/`ProfileFunc` types, built-in key extractors (`KeyFromRemoteIP`, `KeyFromHeader`), per-profile routing (`WithProfiles`, `WithProfileFunc`) |
+| `middleware.go` | `net/http` middleware, `KeyFunc`/`ClassifyFunc` types, built-in key extractors (`KeyFromRemoteIP`, `KeyFromHeader`), per-profile routing (`WithProfiles`, `WithClassifier`), `Result.writeHeaders` method |
 
 ### Test Files
 
@@ -74,7 +74,7 @@ This is a single-package Go library (`package capacitor`). All source lives at t
 Both the limiter and middleware use the functional options pattern:
 
 - **Limiter options** (`Option` = `func(*Capacitor)`): `WithLogger`, `WithFallback`, `WithMetrics`
-- **Middleware options** (`MiddlewareOption` = `func(*mw)`): `WithKeyFunc`, `WithDenyHandler`, `WithProfiles`, `WithProfileFunc`
+- **Middleware options** (`MiddlewareOption` = `func(*middleware)`): `WithKeyFunc`, `WithDenyHandler`, `WithProfiles`, `WithClassifier`
 
 ### Lua Script Execution
 
@@ -92,14 +92,15 @@ When Valkey is unreachable, `Attempt()` returns a degraded result based on the c
 - Empty key from `KeyFunc` skips rate limiting (passes request through)
 - Sets IETF `RateLimit-*` headers on every response
 - `Retry-After` and `RateLimit-Reset` only set on denied requests
-- Per-profile routing via `ProfileFunc`: selects a `Capacitor` instance by profile name
+- Per-profile routing via `ClassifyFunc`: selects a `Capacitor` instance by profile name
 - Unknown or empty profile falls back to the default limiter
 - Profile key prefixes are auto-namespaced (`:profile:<name>`), default keeps original format
+- `Result.writeHeaders` method sets IETF rate-limit headers
 
 ## Naming Conventions & Style
 
-- **Exported types**: `PascalCase` — `Capacitor`, `Config`, `Result`, `FallbackStrategy`, `KeyFunc`, `ProfileFunc`, `ProfileConfig`, `MetricsCollector`
-- **Option constructors**: `With*` prefix — `WithLogger`, `WithFallback`, `WithMetrics`, `WithKeyFunc`, `WithDenyHandler`, `WithProfiles`, `WithProfileFunc`
+- **Exported types**: `PascalCase` — `Capacitor`, `Config`, `Result`, `FallbackStrategy`, `KeyFunc`, `ClassifyFunc`, `ProfileConfig`, `MetricsCollector`
+- **Option constructors**: `With*` prefix — `WithLogger`, `WithFallback`, `WithMetrics`, `WithKeyFunc`, `WithDenyHandler`, `WithProfiles`, `WithClassifier`
 - **Sentinel errors**: `Err*` prefix as package-level `var` — `ErrEmptyUID`, `ErrEvalResponse`
 - **Constants**: iota enums — `FallbackFailOpen`, `FallbackFailClosed`
 - **Test package**: External test package (`package capacitor_test`) — tests import the library as a consumer would

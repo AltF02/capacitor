@@ -241,7 +241,7 @@ func TestWithProfiles(t *testing.T) {
 		remaining       int
 		remoteAddr      string
 		useProfiles     bool
-		useProfileFunc  bool
+		useClassifier   bool
 		expectedStatus  int
 		expectedHeaders map[string]string
 	}{
@@ -251,7 +251,7 @@ func TestWithProfiles(t *testing.T) {
 			remaining:      49,
 			remoteAddr:     "10.0.0.1:1234",
 			useProfiles:    true,
-			useProfileFunc: true,
+			useClassifier:  true,
 			expectedStatus: http.StatusOK,
 			expectedHeaders: map[string]string{
 				"RateLimit-Limit":     "100",
@@ -264,7 +264,7 @@ func TestWithProfiles(t *testing.T) {
 			remaining:      9,
 			remoteAddr:     "10.0.0.1:1234",
 			useProfiles:    true,
-			useProfileFunc: true,
+			useClassifier:  true,
 			expectedStatus: http.StatusOK,
 			expectedHeaders: map[string]string{
 				"RateLimit-Limit":     "20",
@@ -277,20 +277,20 @@ func TestWithProfiles(t *testing.T) {
 			remaining:      15,
 			remoteAddr:     "10.0.0.1:1234",
 			useProfiles:    true,
-			useProfileFunc: true,
+			useClassifier:  true,
 			expectedStatus: http.StatusOK,
 			expectedHeaders: map[string]string{
 				"RateLimit-Limit":     "20",
 				"RateLimit-Remaining": "15",
 			},
 		},
-		"no profile func uses default limiter": {
+		"no classifier uses default limiter": {
 			profile:        "premium",
 			allowed:        true,
 			remaining:      9,
 			remoteAddr:     "10.0.0.1:1234",
 			useProfiles:    true,
-			useProfileFunc: false,
+			useClassifier:  false,
 			expectedStatus: http.StatusOK,
 			expectedHeaders: map[string]string{
 				"RateLimit-Limit":     "20",
@@ -303,7 +303,7 @@ func TestWithProfiles(t *testing.T) {
 			remaining:      9,
 			remoteAddr:     "10.0.0.1:1234",
 			useProfiles:    false,
-			useProfileFunc: false,
+			useClassifier:  false,
 			expectedStatus: http.StatusOK,
 			expectedHeaders: map[string]string{
 				"RateLimit-Limit":     "20",
@@ -316,20 +316,20 @@ func TestWithProfiles(t *testing.T) {
 			remaining:      0,
 			remoteAddr:     "10.0.0.1:1234",
 			useProfiles:    true,
-			useProfileFunc: true,
+			useClassifier:  true,
 			expectedStatus: http.StatusTooManyRequests,
 			expectedHeaders: map[string]string{
 				"RateLimit-Limit":     "5",
 				"RateLimit-Remaining": "0",
 			},
 		},
-		"profile func without profiles uses default limiter": {
+		"classifier without profiles uses default limiter": {
 			profile:        "premium",
 			allowed:        true,
 			remaining:      9,
 			remoteAddr:     "10.0.0.1:1234",
 			useProfiles:    false,
-			useProfileFunc: true,
+			useClassifier:  true,
 			expectedStatus: http.StatusOK,
 			expectedHeaders: map[string]string{
 				"RateLimit-Limit":     "20",
@@ -351,9 +351,9 @@ func TestWithProfiles(t *testing.T) {
 			if c.useProfiles {
 				opts = append(opts, capacitor.WithProfiles(testProfiles))
 			}
-			if c.useProfileFunc {
+			if c.useClassifier {
 				opts = append(opts,
-					capacitor.WithProfileFunc(func(_ *http.Request) string { return c.profile }),
+					capacitor.WithClassifier(func(_ *http.Request) string { return c.profile }),
 				)
 			}
 

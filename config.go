@@ -13,7 +13,7 @@ type Config struct {
 // ProfileConfig maps profile names to their rate limit configurations.
 // Profile key prefixes are auto-namespaced with ":profile:<name>" to
 // prevent collisions. Unknown or empty profile names fall back to the
-// default limiter.
+// default limiter. Used with [WithProfiles] and [WithClassifier].
 type ProfileConfig map[string]Config
 
 // DefaultConfig returns a Config with sensible defaults for general use.
