@@ -2,6 +2,7 @@ package capacitor
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -109,7 +110,8 @@ func NewMiddleware(limiter Capacitor, opts ...MiddlewareOption) func(http.Handle
 
 			result, err := lim.Attempt(r.Context(), key)
 			if err != nil {
-				_ = err
+				slog.Warn("rate limiter degraded, using fallback",
+					"error", err, "key", key)
 			}
 
 			result.writeHeaders(w)

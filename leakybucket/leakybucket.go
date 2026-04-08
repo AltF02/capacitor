@@ -78,17 +78,25 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 	}
 
 	arr, err := res.ToArray()
-	if err != nil || len(arr) != 2 {
-		l.opts.Logger.Error("unexpected eval response", "error", err, "len", len(arr))
+	if err != nil {
+		l.opts.Logger.Error("valkey response parse failed", "error", err)
 		return capacitor.FallbackResult(l.opts.Fallback, l.config.Capacity, 1/l.config.LeakRate),
-			fmt.Errorf("%w: %v", capacitor.ErrEvalResponse, err)
+			fmt.Errorf("capacitor: leakybucket: response: %w", err)
+	}
+	if len(arr) != 2 {
+		l.opts.Logger.Error("unexpected eval response length", "len", len(arr))
+		return capacitor.FallbackResult(l.opts.Fallback, l.config.Capacity, 1/l.config.LeakRate),
+			fmt.Errorf("%w: expected 2 elements, got %d", capacitor.ErrEvalResponse, len(arr))
 	}
 
 	allowedInt, err := arr[0].ToInt64()
 	if err != nil {
 		return capacitor.Result{}, fmt.Errorf("capacitor: leakybucket: parse allowed: %w", err)
 	}
-	remaining, _ := arr[1].ToInt64()
+	remaining, err := arr[1].ToInt64()
+	if err != nil {
+		return capacitor.Result{}, fmt.Errorf("capacitor: leakybucket: parse remaining: %w", err)
+	}
 
 	allowed := allowedInt == 1
 
