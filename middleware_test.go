@@ -9,6 +9,7 @@ import (
 
 	"codeberg.org/matthew/capacitor"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/valkey-io/valkey-go/mock"
 	"go.uber.org/mock/gomock"
 )
@@ -199,15 +200,19 @@ func TestMiddleware(t *testing.T) {
 
 			handler.ServeHTTP(rec, req)
 
-			if rec.Code != c.expectedStatus {
-				t.Errorf("status = %d, want %d", rec.Code, c.expectedStatus)
+			if diff := cmp.Diff(c.expectedStatus, rec.Code); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s", diff)
 			}
-			if got := rec.Body.String(); got != c.expectedBody {
-				t.Errorf("body = %q, want %q", got, c.expectedBody)
+			if diff := cmp.Diff(c.expectedBody, rec.Body.String()); diff != "" {
+				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
-			for k, want := range c.expectedHeaders {
-				if got := rec.Header().Get(k); got != want {
-					t.Errorf("header %q = %q, want %q", k, got, want)
+			if len(c.expectedHeaders) > 0 {
+				gotHeaders := make(map[string]string, len(c.expectedHeaders))
+				for k := range c.expectedHeaders {
+					gotHeaders[k] = rec.Header().Get(k)
+				}
+				if diff := cmp.Diff(c.expectedHeaders, gotHeaders); diff != "" {
+					t.Errorf("headers mismatch (-want +got):\n%s", diff)
 				}
 			}
 		})
@@ -372,13 +377,15 @@ func TestWithProfiles(t *testing.T) {
 
 			handler.ServeHTTP(rec, req)
 
-			if rec.Code != c.expectedStatus {
-				t.Errorf("status = %d, want %d", rec.Code, c.expectedStatus)
+			if diff := cmp.Diff(c.expectedStatus, rec.Code); diff != "" {
+				t.Errorf("status mismatch (-want +got):\n%s", diff)
 			}
-			for k, want := range c.expectedHeaders {
-				if got := rec.Header().Get(k); got != want {
-					t.Errorf("header %q = %q, want %q", k, got, want)
-				}
+			gotHeaders := make(map[string]string, len(c.expectedHeaders))
+			for k := range c.expectedHeaders {
+				gotHeaders[k] = rec.Header().Get(k)
+			}
+			if diff := cmp.Diff(c.expectedHeaders, gotHeaders); diff != "" {
+				t.Errorf("headers mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
