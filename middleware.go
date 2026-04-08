@@ -14,14 +14,19 @@ type KeyFunc func(r *http.Request) string
 // An empty return value uses the default limiter.
 type ClassifyFunc func(r *http.Request) string
 
+// ProfileConfig maps profile names to Capacitor instances.
+// Use it with [WithProfiles] and [WithClassifier] to route
+// requests to different rate-limiting policies.
+type ProfileConfig map[string]Capacitor
+
 // MiddlewareOption configures the HTTP middleware.
 type MiddlewareOption func(*middleware)
 
 type middleware struct {
-	limiter     *Capacitor
+	limiter     Capacitor
 	keyFunc     KeyFunc
 	denyHandler http.Handler
-	profiles    map[string]*Capacitor
+	profiles    ProfileConfig
 	classifier  ClassifyFunc
 }
 
@@ -36,12 +41,11 @@ func WithDenyHandler(h http.Handler) MiddlewareOption {
 	return func(m *middleware) { m.denyHandler = h }
 }
 
-// WithProfiles configures per-profile limiters that share the base
-// limiter's Valkey client. Profile key prefixes are auto-namespaced
-// with ":profile:<name>" to prevent collisions. Unknown or empty
-// profile names fall back to the default limiter.
+// WithProfiles configures per-profile limiters. Combine with
+// [WithClassifier] to route requests to named profiles. Unknown
+// or empty profile names fall back to the default limiter.
 func WithProfiles(profiles ProfileConfig) MiddlewareOption {
-	return func(m *middleware) { m.buildProfiles(profiles) }
+	return func(m *middleware) { m.profiles = profiles }
 }
 
 // WithClassifier sets the function used to route a request to a
@@ -50,47 +54,25 @@ func WithClassifier(fn ClassifyFunc) MiddlewareOption {
 	return func(m *middleware) { m.classifier = fn }
 }
 
-// buildProfiles creates per-profile limiters that share the base
-// limiter's Valkey client and settings.
-func (m *middleware) buildProfiles(profiles ProfileConfig) {
-	if len(profiles) == 0 {
-		return
-	}
-
-	m.profiles = make(map[string]*Capacitor, len(profiles))
-
-	for name, cfg := range profiles {
-		cfg.KeyPrefix += ":profile:" + name
-		m.profiles[name] = &Capacitor{
-			client:   m.limiter.client,
-			config:   cfg,
-			logger:   m.limiter.logger,
-			fallback: m.limiter.fallback,
-			metrics:  m.limiter.metrics,
-		}
-	}
-}
-
-// resolve returns the limiter and profile name for the request.
-func (m *middleware) resolve(r *http.Request) (*Capacitor, string) {
+func (m *middleware) resolve(r *http.Request) Capacitor {
 	if m.classifier == nil {
-		return m.limiter, ""
+		return m.limiter
 	}
 	name := m.classifier(r)
 	if name == "" {
-		return m.limiter, ""
+		return m.limiter
 	}
-	if limiter, ok := m.profiles[name]; ok {
-		return limiter, name
+	if lim, ok := m.profiles[name]; ok {
+		return lim
 	}
-	return m.limiter, ""
+	return m.limiter
 }
 
 // KeyFromRemoteIP extracts the IP from RemoteAddr, stripping the port.
 func KeyFromRemoteIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr // already bare IP
+		return r.RemoteAddr
 	}
 	return host
 }
@@ -103,8 +85,8 @@ func KeyFromHeader(name string) KeyFunc {
 }
 
 // NewMiddleware returns standard net/http middleware that rate-limits
-// requests using the provided Capacitor instance.
-func NewMiddleware(limiter *Capacitor, opts ...MiddlewareOption) func(http.Handler) http.Handler {
+// requests using the provided Capacitor.
+func NewMiddleware(limiter Capacitor, opts ...MiddlewareOption) func(http.Handler) http.Handler {
 	m := &middleware{
 		limiter:     limiter,
 		keyFunc:     KeyFromRemoteIP,
@@ -123,12 +105,11 @@ func NewMiddleware(limiter *Capacitor, opts ...MiddlewareOption) func(http.Handl
 				return
 			}
 
-			limiter, profile := m.resolve(r)
+			lim := m.resolve(r)
 
-			result, err := limiter.Attempt(r.Context(), key)
+			result, err := lim.Attempt(r.Context(), key)
 			if err != nil {
-				limiter.logger.Warn("rate limiter degraded, using fallback",
-					"error", err, "key", key, "profile", profile)
+				_ = err
 			}
 
 			result.writeHeaders(w)

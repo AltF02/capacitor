@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/leakybucket"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/valkey-io/valkey-go/mock"
@@ -84,7 +85,7 @@ func TestKeyFromHeader(t *testing.T) {
 }
 
 func TestMiddleware(t *testing.T) {
-	cfg := capacitor.DefaultConfig()
+	cfg := leakybucket.DefaultConfig()
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -188,7 +189,7 @@ func TestMiddleware(t *testing.T) {
 					)))
 			}
 
-			limiter := capacitor.New(client, cfg, capacitor.WithLogger(slog.Default()))
+			limiter := leakybucket.New(client, cfg, capacitor.WithLogger(slog.Default()))
 			handler := capacitor.NewMiddleware(limiter, c.opts...)(next)
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -224,21 +225,6 @@ func TestWithProfiles(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
-
-	testProfiles := capacitor.ProfileConfig{
-		"basic": {
-			Capacity:  5,
-			LeakRate:  1,
-			KeyPrefix: "capacitor",
-			Timeout:   50 * time.Millisecond,
-		},
-		"premium": {
-			Capacity:  100,
-			LeakRate:  10,
-			KeyPrefix: "capacitor",
-			Timeout:   50 * time.Millisecond,
-		},
-	}
 
 	cases := map[string]struct {
 		profile         string
@@ -348,13 +334,30 @@ func TestWithProfiles(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			client := mock.NewClient(ctrl)
 
-			cfg := capacitor.DefaultConfig()
-			limiter := capacitor.New(client, cfg, capacitor.WithLogger(slog.Default()))
+			defaultCfg := leakybucket.DefaultConfig()
+			defaultLimiter := leakybucket.New(client, defaultCfg, capacitor.WithLogger(slog.Default()))
 
 			var opts []capacitor.MiddlewareOption
 
 			if c.useProfiles {
-				opts = append(opts, capacitor.WithProfiles(testProfiles))
+				basicLimiter := leakybucket.New(client, leakybucket.Config{
+					Capacity:  5,
+					LeakRate:  1,
+					KeyPrefix: "capacitor:profile:basic",
+					Timeout:   50 * time.Millisecond,
+				}, capacitor.WithLogger(slog.Default()))
+
+				premiumLimiter := leakybucket.New(client, leakybucket.Config{
+					Capacity:  100,
+					LeakRate:  10,
+					KeyPrefix: "capacitor:profile:premium",
+					Timeout:   50 * time.Millisecond,
+				}, capacitor.WithLogger(slog.Default()))
+
+				opts = append(opts, capacitor.WithProfiles(capacitor.ProfileConfig{
+					"basic":   basicLimiter,
+					"premium": premiumLimiter,
+				}))
 			}
 			if c.useClassifier {
 				opts = append(opts,
@@ -369,7 +372,7 @@ func TestWithProfiles(t *testing.T) {
 					mock.ValkeyInt64(int64(c.remaining)),
 				)))
 
-			handler := capacitor.NewMiddleware(limiter, opts...)(next)
+			handler := capacitor.NewMiddleware(defaultLimiter, opts...)(next)
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
 			req.RemoteAddr = c.remoteAddr
@@ -380,12 +383,14 @@ func TestWithProfiles(t *testing.T) {
 			if diff := cmp.Diff(c.expectedStatus, rec.Code); diff != "" {
 				t.Errorf("status mismatch (-want +got):\n%s", diff)
 			}
-			gotHeaders := make(map[string]string, len(c.expectedHeaders))
-			for k := range c.expectedHeaders {
-				gotHeaders[k] = rec.Header().Get(k)
-			}
-			if diff := cmp.Diff(c.expectedHeaders, gotHeaders); diff != "" {
-				t.Errorf("headers mismatch (-want +got):\n%s", diff)
+			if len(c.expectedHeaders) > 0 {
+				gotHeaders := make(map[string]string, len(c.expectedHeaders))
+				for k := range c.expectedHeaders {
+					gotHeaders[k] = rec.Header().Get(k)
+				}
+				if diff := cmp.Diff(c.expectedHeaders, gotHeaders); diff != "" {
+					t.Errorf("headers mismatch (-want +got):\n%s", diff)
+				}
 			}
 		})
 	}
