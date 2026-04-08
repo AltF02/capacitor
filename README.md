@@ -6,7 +6,7 @@ A rate-limiting library for Go, backed by [Valkey](https://valkey.io). Atomic li
 
 - 5 rate-limiting algorithms: leaky bucket, fixed window, token bucket, sliding window counter, sliding window log
 - All algorithms execute atomically in a single Valkey round-trip via Lua scripts
-- Standard `func(http.Handler) http.Handler` middleware — works with any `http.Handler`-based router
+- Standard `func(http.Handler) http.Handler` middleware, works with any `http.Handler`-based router
 - Configurable key extraction (IP, header, custom function)
 - [IETF RateLimit header fields](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/) on every response
 - Fallback strategy when Valkey is unreachable (fail-open or fail-closed)
@@ -23,21 +23,33 @@ Requires Go 1.22+ and a running Valkey (or Redis 7+) instance.
 
 ## Algorithms
 
-| Package | Algorithm | Best for | Valkey data structure |
-|---|---|---|---|
-| `leakybucket` | Leaky bucket (policing) | Smooth rate enforcement, constant drain | HASH (level + last_leak) |
-| `fixedwindow` | Fixed-window counter | Simple, low overhead | STRING (INCR + EXPIRE) |
-| `tokenbucket` | Token bucket | Controlled bursts with steady average rate | HASH (tokens + last_refill) |
-| `slidingwindowcounter` | Sliding-window counter | Near-exact accuracy with low memory | STRING x2 (weighted avg) |
-| `slidingwindowlog` | Sliding-window log | True rolling window, exact counting | SORTED SET |
+The algorithms and Lua scripts in Capacitor follow the patterns described in the [Redis rate limiting tutorial](https://redis.io/tutorials/howtos/ratelimiting/), which covers the tradeoffs between all five approaches in depth.
+
+| Package | Algorithm | Best for | Valkey data structure | Accuracy |
+|---|---|---|---|---|
+| `leakybucket` | Leaky bucket (policing) | Strict no-burst, constant drain | HASH (level + last_leak) | Exact |
+| `fixedwindow` | Fixed-window counter | Simple, low overhead | STRING (INCR + EXPIRE) | Approximate |
+| `tokenbucket` | Token bucket | Controlled bursts with steady average rate | HASH (tokens + last_refill) | Exact |
+| `slidingwindowcounter` | Sliding-window counter | Near-exact accuracy with low memory | STRING x2 (weighted avg) | Near-exact |
+| `slidingwindowlog` | Sliding-window log | True rolling window, exact counting | SORTED SET | Exact |
 
 ### Choosing an Algorithm
 
-- **Leaky bucket** — Classic policing mode. Requests fill the bucket at arrival rate and drain at a constant rate. Best when you need smooth, predictable outflow.
-- **Fixed window** — Simplest algorithm. Counts requests in discrete time windows. Subject to boundary bursts (2x limit at window edges) but minimal Valkey overhead.
-- **Token bucket** — Tokens accumulate over time up to capacity. Allows controlled bursts while enforcing a steady average rate. Ideal for APIs that need to handle short spikes.
-- **Sliding window counter** — Blends two fixed windows with a weighted average. Near-exact accuracy with the low memory of fixed window. Good balance of precision and efficiency.
-- **Sliding window log** — Records exact timestamps in a sorted set. True rolling window with no boundary bursts. Higher memory per request, but mathematically exact.
+Start with the sliding window counter if you are unsure. It handles most API rate limiting scenarios well: low memory, near-exact accuracy, and no boundary bursts. It is the best default choice for distributed rate limiting.
+
+- **Fixed window** counts requests in discrete time windows. Minimal Valkey overhead (one key per window), but susceptible to boundary bursts: a client could send the full limit at the end of one window and the full limit at the start of the next, doubling throughput for a brief period. Good for login throttling and simple API limits where approximate enforcement is acceptable.
+- **Sliding window log** records the exact timestamp of every request in a sorted set, providing a true rolling window with no boundary bursts. Memory grows linearly with request volume (O(n) entries per client). Best for high-value APIs, payment processing, and any scenario where you need exact counts and can afford the memory cost.
+- **Sliding window counter** blends two fixed-window counters using a weighted average to approximate a true sliding window. Offers near-exact accuracy with the same low memory footprint as fixed window. The two keys use [Redis cluster hash tags](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/#hash-tags) so they always land on the same cluster slot.
+- **Token bucket** allows controlled bursts up to bucket capacity while enforcing a steady average rate over time. Tokens accumulate over time; each request consumes one. Ideal for APIs with naturally bursty traffic patterns (e.g. mobile apps that batch requests on launch).
+- **Leaky bucket** (policing mode) provides strict no-burst behavior. A counter tracks the fill level and drains at a constant rate; requests that would exceed capacity are rejected immediately. Best when your downstream service cannot handle any spikes at all. Note: this is the policing variant only (immediate allow/deny); shaping mode (delayed queue drain) is not implemented.
+
+### Why Lua Scripts?
+
+Every algorithm executes a Lua script via `EVAL` for atomic read-modify-write. Without atomicity, concurrent requests can read the same state, both pass the limit check, and both write back, bypassing the limit. This is a TOCTOU (time-of-check-time-of-use) race condition that matters most under the high-concurrency conditions where rate limiting is critical.
+
+Alternatives like `MULTI/EXEC` cannot branch on intermediate results, and `WATCH`/`MULTI`/`EXEC` requires retries on every concurrent write, which is the worst behavior for a rate limiter. Lua scripts always complete on the first attempt in a single round trip with no contention.
+
+See the [Redis tutorial on why Lua scripts](https://redis.io/tutorials/howtos/ratelimiting/#why-lua-scripts) for a detailed comparison.
 
 ## Quick Start
 
@@ -142,7 +154,7 @@ Each algorithm has its own `Config` struct:
 | `KeyPrefix` | `string` | Prefix for Valkey keys |
 | `Timeout` | `time.Duration` | Per-call Valkey timeout |
 
-All config fields are validated in `New()` — zero or negative values panic (programmer errors).
+All config fields are validated in `New()`: zero or negative values panic (programmer errors).
 
 ## Middleware Options
 
@@ -218,7 +230,7 @@ rl := capacitor.NewMiddleware(defaultLimiter,
 )
 ```
 
-- Each profile is a `capacitor.Capacitor` — use any algorithm or config
+- Each profile is a `capacitor.Capacitor`, use any algorithm or config
 - If the classifier returns `""` or a name not in `ProfileConfig`, the default limiter is used
 - Omit `WithProfiles` entirely for single-global-limit behavior
 
@@ -238,7 +250,7 @@ You can call the limiter directly for non-HTTP use cases such as background work
 ```go
 result, err := limiter.Attempt(ctx, "user:42")
 if err != nil {
-	// Valkey unreachable — result contains the fallback decision.
+	// Valkey unreachable: result contains the fallback decision.
 	log.Println("fallback used:", err)
 }
 

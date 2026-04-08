@@ -51,7 +51,7 @@ nix develop -c go test -v ./...
 ## Code Organization
 
 ```
-capacitor/                    # root package — interface, Result, Options, middleware
+capacitor/                    # root package: interface, Result, Options, middleware
 ├── capacitor.go              # Capacitor interface, Result, FallbackStrategy, FallbackResult(), Options, Option, With*
 ├── metrics.go                # MetricsCollector interface
 ├── middleware.go              # NewMiddleware, ProfileConfig, KeyFunc, ClassifyFunc, writeHeaders
@@ -88,7 +88,7 @@ capacitor/                    # root package — interface, Result, Options, mid
 
 ### Capacitor Interface
 
-Root package defines `Capacitor` as an interface; sub-packages implement and return it. This is the stdlib `hash.Hash` pattern — no circular dependencies.
+Root package defines `Capacitor` as an interface; sub-packages implement and return it. This is the stdlib `hash.Hash` pattern: no circular dependencies.
 
 ```go
 type Capacitor interface {
@@ -127,7 +127,7 @@ When Valkey is unreachable, `Attempt()` returns a degraded result via `capacitor
 - `Retry-After` and `RateLimit-Reset` only set on denied requests
 - Per-profile routing via `ClassifyFunc`: selects a `Capacitor` instance by profile name
 - Unknown or empty profile falls back to the default limiter
-- `ProfileConfig` is `map[string]Capacitor` — users construct limiters and pass them in
+- `ProfileConfig` is `map[string]Capacitor`: users construct limiters and pass them in
 - `Result.writeHeaders` method sets IETF rate-limit headers
 
 ### Compile-Time Interface Checks
@@ -140,13 +140,12 @@ var _ capacitor.Capacitor = (*limiter)(nil)
 
 ## Naming Conventions & Style
 
-- **Exported types**: `PascalCase` — `Capacitor`, `Result`, `FallbackStrategy`, `KeyFunc`, `ClassifyFunc`, `ProfileConfig`, `MetricsCollector`
-- **Per-algorithm Config**: Each sub-package defines its own `Config` struct (e.g. `leakybucket.Config`, `fixedwindow.Config`)
-- **Option constructors**: `With*` prefix — `WithLogger`, `WithFallback`, `WithMetrics`, `WithKeyFunc`, `WithDenyHandler`, `WithProfiles`, `WithClassifier`
-- **Sentinel errors**: `Err*` prefix as package-level `var` — `ErrEmptyUID`, `ErrEvalResponse`
-- **Constants**: iota enums — `FallbackFailOpen`, `FallbackFailClosed`
-- **Default key prefixes**: `capacitor:<name>` pattern — `capacitor:leaky`, `capacitor:fixedwin`, `capacitor:token`, `capacitor:swcounter`, `capacitor:swlog`
-- **Test package**: External test package (`package xxx_test`) — tests import the library as a consumer would
+- **Exported types**: `PascalCase`: `Capacitor`, `Result`, `FallbackStrategy`, `KeyFunc`, `ClassifyFunc`, `ProfileConfig`, `MetricsCollector`
+- **Option constructors**: `With*` prefix: `WithLogger`, `WithFallback`, `WithMetrics`, `WithKeyFunc`, `WithDenyHandler`, `WithProfiles`, `WithClassifier`
+- **Sentinel errors**: `Err*` prefix as package-level `var`: `ErrEmptyUID`, `ErrEvalResponse`
+- **Constants**: iota enums: `FallbackFailOpen`, `FallbackFailClosed`
+- **Default key prefixes**: `capacitor:<name>` pattern: `capacitor:leaky`, `capacitor:fixedwin`, `capacitor:token`, `capacitor:swcounter`, `capacitor:swlog`
+- **Test package**: External test package (`package xxx_test`): tests import the library as a consumer would
 - **Test structure**: Table-driven tests using `map[string]struct{}` with descriptive string keys
 - **Assertions**: `github.com/google/go-cmp/cmp` for struct diffs, manual comparisons for simple values
 - **Mocking**: `valkey-go/mock` with `go.uber.org/mock/gomock` for Valkey client mocks
@@ -188,7 +187,7 @@ import (
 
 - Use pointer receivers (`*T`) for mutable objects and when methods need to mutate state
 - Use value receivers (`T`) only for immutable data or small types where copy is cheap
-- Consistency matters more than specific choice — if one method needs a pointer receiver, all should
+- Consistency matters more than specific choice: if one method needs a pointer receiver, all should
 
 ### Short Variable Declarations
 
@@ -211,7 +210,7 @@ Use `var` only for package-level variables or when explicit type is needed.
 
 ## Testing Approach
 
-All tests use mocked Valkey clients — no real Valkey instance needed.
+All tests use mocked Valkey clients: no real Valkey instance needed.
 
 ### Mock Pattern
 
@@ -234,16 +233,16 @@ lim := leakybucket.New(client, cfg)
 
 `internal/testutil/testutil.go` provides:
 
-- `Btoi(bool) int64` — converts bool to int64 using `unsafe.Pointer` (test-only)
-- `MetricsMock` — implements `MetricsCollector`, records calls for assertion
+- `Btoi(bool) int64`: converts bool to int64 using `unsafe.Pointer` (test-only)
+- `MetricsMock`: implements `MetricsCollector`, records calls for assertion
 
 ## Gotchas
 
 1. **Time units in Lua scripts**: All Lua scripts expect `now` in seconds. Keep rate/window parameters in the same unit or the math breaks.
 2. **`Attempt()` returns both result and error on Valkey failure**: The result contains the fallback decision; don't discard it when `err != nil`.
-3. **`unsafe` in tests**: The `Btoi` helper uses `unsafe.Pointer` — this is intentional and test-only.
+3. **`unsafe` in tests**: The `Btoi` helper uses `unsafe.Pointer`: this is intentional and test-only.
 4. **Go 1.25.5 / 1.26**: The project uses a very recent Go version provided via Nix. Ensure your toolchain matches.
 5. **No `go generate`**: Mock generation is handled by the upstream `valkey-go/mock` package; there are no local `go:generate` directives.
 6. **Lua scripts return 3 values**: All algorithms return `{allowed, remaining, retry_after}`. If adding a new algorithm, follow this convention.
 7. **Cluster hash tags in slidingwindowcounter**: Keys use `{baseKey}` pattern to ensure both windows hash to the same Redis Cluster slot.
-8. **Config validation panics**: `New()` panics on invalid config (zero/negative values). This is intentional — these are programmer errors.
+8. **Config validation panics**: `New()` panics on invalid config (zero/negative values). This is intentional: these are programmer errors.
