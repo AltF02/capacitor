@@ -127,7 +127,7 @@ func ParseResponse(
 	}
 	if len(arr) != 3 {
 		logger.Error("unexpected eval response length", "len", len(arr))
-		return 0, 0, 0, fmt.Errorf("%w: %w: expected 3 elements, got %d", errFallback, capacitor.ErrEvalResponse, len(arr))
+		return 0, 0, 0, fmt.Errorf("%w: capacitor: %s: %w: expected 3 elements, got %d", errFallback, name, capacitor.ErrEvalResponse, len(arr))
 	}
 
 	allowed, err = arr[0].ToInt64()

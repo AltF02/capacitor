@@ -64,6 +64,7 @@ func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.C
 }
 
 func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, error) {
+	// Record total method wall-clock time, including validation
 	start := time.Now()
 	if l.Opts.Metrics != nil {
 		defer func() { l.Opts.Metrics.RecordLatency(time.Since(start)) }()
@@ -89,6 +90,8 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 	allowedInt, remaining, retryAfterSecs, err := ratelimit.ParseResponse(res, "tokenbucket", l.Opts.Logger, uid)
 	if err != nil {
 		if ratelimit.IsFallbackError(err) {
+			// Fallback result returned directly without recording metrics.
+			// Metrics are only recorded for successful Valkey responses.
 			return capacitor.FallbackResult(l.Opts.Fallback, l.config.Capacity, 1/l.config.RefillRate), err
 		}
 		return capacitor.Result{}, err
