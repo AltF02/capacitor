@@ -54,6 +54,18 @@ const (
 	FallbackFailClosed
 )
 
+// String returns the string representation of the FallbackStrategy.
+func (s FallbackStrategy) String() string {
+	switch s {
+	case FallbackFailOpen:
+		return "fail_open"
+	case FallbackFailClosed:
+		return "fail_closed"
+	default:
+		return "unknown"
+	}
+}
+
 // FallbackResult returns a degraded Result based on the given strategy.
 // Algorithm sub-packages call this when Valkey is unreachable.
 func FallbackResult(strategy FallbackStrategy, limit int64, retryAfterSecs float64) Result {

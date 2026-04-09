@@ -29,6 +29,7 @@ type middleware struct {
 	denyHandler http.Handler
 	profiles    ProfileConfig
 	classifier  ClassifyFunc
+	logger      *slog.Logger
 }
 
 // WithKeyFunc sets the function used to derive the rate-limit key.
@@ -92,6 +93,7 @@ func NewMiddleware(limiter Capacitor, opts ...MiddlewareOption) func(http.Handle
 		limiter:     limiter,
 		keyFunc:     KeyFromRemoteIP,
 		denyHandler: http.HandlerFunc(defaultDeny),
+		logger:      slog.Default(),
 	}
 
 	for _, opt := range opts {
@@ -110,7 +112,7 @@ func NewMiddleware(limiter Capacitor, opts ...MiddlewareOption) func(http.Handle
 
 			result, err := lim.Attempt(r.Context(), key)
 			if err != nil {
-				slog.Warn("rate limiter degraded, using fallback",
+				m.logger.Warn("rate limiter degraded, using fallback",
 					"error", err, "key", key)
 			}
 

@@ -115,8 +115,6 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 
 func randBytes() string {
 	b := make([]byte, 4)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%d%x", time.Now().UnixNano(), b)
-	}
+	_, _ = rand.Read(b)
 	return fmt.Sprintf("%x", b)
 }

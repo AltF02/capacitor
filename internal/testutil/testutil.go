@@ -1,12 +1,10 @@
 package testutil
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/valkey-io/valkey-go"
@@ -16,9 +14,12 @@ import (
 	"codeberg.org/matthew/capacitor"
 )
 
-// Btoi converts a bool to int64 using a zero-copy cast. Test-only.
+// Btoi converts a bool to int64. Test-only.
 func Btoi(b bool) int64 {
-	return int64(*(*byte)(unsafe.Pointer(&b)))
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // MetricsMock implements capacitor.MetricsCollector and records all calls
@@ -69,7 +70,7 @@ func RunAttemptCases(t *testing.T, ctor Constructor, cases map[string]AttemptCas
 			}
 
 			lim := ctor(t, client)
-			got, err := lim.Attempt(context.Background(), c.UID)
+			got, err := lim.Attempt(t.Context(), c.UID)
 
 			if !errors.Is(err, c.ExpectedErr) {
 				t.Fatalf("Attempt() error: got %v, want %v", err, c.ExpectedErr)
@@ -105,7 +106,7 @@ func RunFallbackCases(t *testing.T, ctor Constructor, cases map[string]FallbackC
 				capacitor.WithFallback(c.Fallback),
 				capacitor.WithLogger(slog.Default()),
 			)
-			got, err := lim.Attempt(context.Background(), "user:1")
+			got, err := lim.Attempt(t.Context(), "user:1")
 
 			if err == nil {
 				t.Fatal("expected error, got nil")
@@ -147,7 +148,7 @@ func RunMetricsCases(t *testing.T, ctor Constructor, cases map[string]MetricsCas
 
 			m := &MetricsMock{}
 			lim := ctor(t, client, capacitor.WithMetrics(m))
-			if _, err := lim.Attempt(context.Background(), c.UID); err != nil {
+			if _, err := lim.Attempt(t.Context(), c.UID); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
