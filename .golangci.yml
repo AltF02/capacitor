@@ -47,6 +47,10 @@ linters:
         linters:
           - unused
           - staticcheck
+      - path: _test\.go$
+        linters:
+          - errcheck
+        text: "Error return value of `w\\.Write` is not checked"
 
 formatters:
   enable:
