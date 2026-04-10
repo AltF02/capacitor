@@ -1,0 +1,8 @@
+when:
+  - event: push
+
+steps:
+  - name: lint
+    image: golangci/golangci-lint:latest-alpine
+    commands:
+      - golangci-lint run ./...

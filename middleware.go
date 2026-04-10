@@ -144,5 +144,5 @@ func (r Result) writeHeaders(w http.ResponseWriter) {
 func defaultDeny(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusTooManyRequests)
-	_, _ = fmt.Fprintln(w, http.StatusText(http.StatusTooManyRequests))
+	_, _ = fmt.Fprintln(w, http.StatusText(http.StatusTooManyRequests)) //nolint:errcheck // best-effort write to http.ResponseWriter; error unactionable after WriteHeader
 }
