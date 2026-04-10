@@ -1,8 +1,8 @@
-// Package tokenbucket implements a token-bucket rate limiter backed
+// Package token implements a token-bucket rate limiter backed
 // by Valkey. Tokens accumulate over time up to a maximum capacity,
 // and each request consumes one token. This allows controlled bursts
 // while enforcing a steady average rate.
-package tokenbucket
+package token
 
 import (
 	"context"
