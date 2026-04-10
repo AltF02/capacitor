@@ -1,0 +1,61 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+output:
+  formats:
+    text:
+      print-linter-name: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    - misspell
+    - nolintlint
+
+    - gosec
+
+  settings:
+    errcheck:
+      check-blank: true
+      check-type-assertions: true
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+
+    gosec:
+      severity: high
+
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    rules:
+      - path: _test\.go$
+        linters:
+          - unused
+          - staticcheck
+
+formatters:
+  enable:
+    - gofumpt
+  settings:
+    gofumpt:
+      lang-version: "1.26"
+      extra-rules: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
