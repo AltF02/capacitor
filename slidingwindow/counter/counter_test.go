@@ -1,4 +1,4 @@
-package slidingwindowlog_test
+package counter_test
 
 import (
 	"testing"
@@ -6,14 +6,14 @@ import (
 
 	"codeberg.org/matthew/capacitor"
 	"codeberg.org/matthew/capacitor/internal/testutil"
-	"codeberg.org/matthew/capacitor/slidingwindowlog"
+	"codeberg.org/matthew/capacitor/slidingwindow/counter"
 
 	"github.com/valkey-io/valkey-go"
 )
 
 func ctor(t *testing.T, client valkey.Client, opts ...capacitor.Option) capacitor.Capacitor {
 	t.Helper()
-	return slidingwindowlog.New(client, slidingwindowlog.DefaultConfig(), opts...)
+	return counter.New(client, counter.DefaultConfig(), opts...)
 }
 
 func TestAttempt(t *testing.T) {

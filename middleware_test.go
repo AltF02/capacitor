@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/bucket/leaky"
 	"codeberg.org/matthew/capacitor/internal/testutil"
-	"codeberg.org/matthew/capacitor/leakybucket"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/valkey-io/valkey-go/mock"
@@ -86,7 +86,7 @@ func TestKeyFromHeader(t *testing.T) {
 }
 
 func TestMiddleware(t *testing.T) {
-	cfg := leakybucket.DefaultConfig()
+	cfg := leaky.DefaultConfig()
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -193,7 +193,7 @@ func TestMiddleware(t *testing.T) {
 					)))
 			}
 
-			limiter := leakybucket.New(client, cfg, capacitor.WithLogger(slog.Default()))
+			limiter := leaky.New(client, cfg, capacitor.WithLogger(slog.Default()))
 			handler := capacitor.NewMiddleware(limiter, c.opts...)(next)
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -339,20 +339,20 @@ func TestWithProfiles(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			client := mock.NewClient(ctrl)
 
-			defaultCfg := leakybucket.DefaultConfig()
-			defaultLimiter := leakybucket.New(client, defaultCfg, capacitor.WithLogger(slog.Default()))
+			defaultCfg := leaky.DefaultConfig()
+			defaultLimiter := leaky.New(client, defaultCfg, capacitor.WithLogger(slog.Default()))
 
 			var opts []capacitor.MiddlewareOption
 
 			if c.useProfiles {
-				basicLimiter := leakybucket.New(client, leakybucket.Config{
+				basicLimiter := leaky.New(client, leaky.Config{
 					Capacity:  5,
 					LeakRate:  1,
 					KeyPrefix: "capacitor:profile:basic",
 					Timeout:   50 * time.Millisecond,
 				}, capacitor.WithLogger(slog.Default()))
 
-				premiumLimiter := leakybucket.New(client, leakybucket.Config{
+				premiumLimiter := leaky.New(client, leaky.Config{
 					Capacity:  100,
 					LeakRate:  10,
 					KeyPrefix: "capacitor:profile:premium",

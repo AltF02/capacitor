@@ -1,19 +1,19 @@
-package tokenbucket_test
+package token_test
 
 import (
 	"testing"
 	"time"
 
 	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/bucket/token"
 	"codeberg.org/matthew/capacitor/internal/testutil"
-	"codeberg.org/matthew/capacitor/tokenbucket"
 
 	"github.com/valkey-io/valkey-go"
 )
 
 func ctor(t *testing.T, client valkey.Client, opts ...capacitor.Option) capacitor.Capacitor {
 	t.Helper()
-	return tokenbucket.New(client, tokenbucket.DefaultConfig(), opts...)
+	return token.New(client, token.DefaultConfig(), opts...)
 }
 
 func TestAttempt(t *testing.T) {

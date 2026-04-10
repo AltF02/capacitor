@@ -54,32 +54,38 @@ nix develop -c go test -v ./...
 capacitor/                    # root package: interface, Result, Options, middleware
 ├── capacitor.go              # Capacitor interface, Result, FallbackStrategy, FallbackResult(), Options, Option, With*
 ├── metrics.go                # MetricsCollector interface
-├── middleware.go              # NewMiddleware, ProfileConfig, KeyFunc, ClassifyFunc, writeHeaders
-├── capacitor_test.go         # Attempt tests via leakybucket (interface-level)
-├── middleware_test.go         # HTTP middleware tests
+├── middleware.go             # NewMiddleware, ProfileConfig, KeyFunc, ClassifyFunc, writeHeaders
+├── capacitor_test.go         # Attempt tests via bucket/leaky (interface-level)
+├── middleware_test.go        # HTTP middleware tests
 ├── metrics_test.go           # type alias for testutil.MetricsMock
 │
-├── leakybucket/              # leaky-bucket algorithm (HASH: level + last_leak)
-│   ├── leakybucket.go
-│   └── leakybucket_test.go
+├── bucket/
+│   ├── leaky/                # leaky-bucket algorithm (HASH: level + last_leak) — package leaky
+│   │   ├── leaky.go
+│   │   ├── leaky_test.go
+│   │   └── script.lua
+│   └── token/                # token-bucket algorithm (HASH: tokens + last_refill) — package token
+│       ├── token.go
+│       ├── token_test.go
+│       └── script.lua
 │
-├── fixedwindow/              # fixed-window counter (INCR + EXPIRE + PTTL)
+├── fixedwindow/              # fixed-window counter (INCR + EXPIRE + PTTL) — package fixedwindow
 │   ├── fixedwindow.go
-│   └── fixedwindow_test.go
+│   ├── fixedwindow_test.go
+│   └── script.lua
 │
-├── tokenbucket/              # token-bucket algorithm (HASH: tokens + last_refill)
-│   ├── tokenbucket.go
-│   └── tokenbucket_test.go
-│
-├── slidingwindowcounter/     # sliding-window counter (STRING x2, cluster hash tags)
-│   ├── slidingwindowcounter.go
-│   └── slidingwindowcounter_test.go
-│
-├── slidingwindowlog/         # sliding-window log (SORTED SET)
-│   ├── slidingwindowlog.go
-│   └── slidingwindowlog_test.go
+├── slidingwindow/
+│   ├── counter/              # sliding-window counter (STRING x2, cluster hash tags) — package counter
+│   │   ├── counter.go
+│   │   ├── counter_test.go
+│   │   └── script.lua
+│   └── timelog/              # sliding-window log (SORTED SET) — package timelog
+│       ├── timelog.go
+│       ├── timelog_test.go
+│       └── script.lua
 │
 └── internal/
+    ├── ratelimit/            # shared rate-limit helpers
     └── testutil/             # shared test helpers (Btoi, MetricsMock)
         └── testutil.go
 ```
@@ -226,7 +232,7 @@ client.EXPECT().
         mock.ValkeyInt64(int64(retryAfter)),
     )))
 
-lim := leakybucket.New(client, cfg)
+lim := leaky.New(client, cfg)
 ```
 
 ### Shared Test Helpers
@@ -244,5 +250,5 @@ lim := leakybucket.New(client, cfg)
 4. **Go 1.25.5 / 1.26**: The project uses a very recent Go version provided via Nix. Ensure your toolchain matches.
 5. **No `go generate`**: Mock generation is handled by the upstream `valkey-go/mock` package; there are no local `go:generate` directives.
 6. **Lua scripts return 3 values**: All algorithms return `{allowed, remaining, retry_after}`. If adding a new algorithm, follow this convention.
-7. **Cluster hash tags in slidingwindowcounter**: Keys use `{baseKey}` pattern to ensure both windows hash to the same Redis Cluster slot.
+7. **Cluster hash tags in slidingwindow/counter**: Keys use `{baseKey}` pattern to ensure both windows hash to the same Redis Cluster slot.
 8. **Config validation panics**: `New()` panics on invalid config (zero/negative values). This is intentional: these are programmer errors.
