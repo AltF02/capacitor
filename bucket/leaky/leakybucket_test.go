@@ -1,19 +1,19 @@
-package leakybucket_test
+package leaky_test
 
 import (
 	"testing"
 	"time"
 
 	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/bucket/leaky"
 	"codeberg.org/matthew/capacitor/internal/testutil"
-	"codeberg.org/matthew/capacitor/leakybucket"
 
 	"github.com/valkey-io/valkey-go"
 )
 
 func ctor(t *testing.T, client valkey.Client, opts ...capacitor.Option) capacitor.Capacitor {
 	t.Helper()
-	return leakybucket.New(client, leakybucket.DefaultConfig(), opts...)
+	return leaky.New(client, leaky.DefaultConfig(), opts...)
 }
 
 func TestAttempt(t *testing.T) {

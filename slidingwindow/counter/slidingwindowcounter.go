@@ -1,8 +1,8 @@
-// Package slidingwindowcounter implements a sliding-window counter
+// Package counter implements a sliding-window counter
 // rate limiter backed by Valkey. It blends two fixed-window counters
 // using a weighted average to approximate a true sliding window,
 // offering near-exact accuracy with low memory usage.
-package slidingwindowcounter
+package counter
 
 import (
 	"context"
