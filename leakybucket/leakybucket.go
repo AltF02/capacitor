@@ -1,14 +1,11 @@
-// Package timelog implements a sliding-window log rate limiter
-// backed by Valkey. It records the exact timestamp of every request
-// in a sorted set, providing a true rolling window with no boundary
-// bursts at the cost of higher memory usage.
-package timelog
+// Package leakybucket implements a leaky-bucket (policing) rate limiter
+// backed by Valkey. The bucket drains at a constant rate; requests that
+// arrive when the bucket is full are denied.
+package leakybucket
 
 import (
 	"context"
-	"crypto/rand"
 	_ "embed"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -19,24 +16,24 @@ import (
 )
 
 //go:embed script.lua
-var luaSlidingWindowLog string
+var luaLeakyBucket string
 
-var slidingWindowLogScript = valkey.NewLuaScript(luaSlidingWindowLog)
+var leakyBucketScript = valkey.NewLuaScript(luaLeakyBucket)
 
-// Config defines the parameters for a sliding-window log rate limiter.
+// Config defines the parameters for a leaky-bucket rate limiter.
 type Config struct {
-	Limit     int64         // maximum requests per window
-	Window    time.Duration // window duration
-	KeyPrefix string        // Valkey key prefix
+	Capacity  int64         // maximum number of requests the bucket can hold
+	LeakRate  float64       // requests drained per second
+	KeyPrefix string        // Valkey key prefix for bucket storage
 	Timeout   time.Duration // per-operation Valkey timeout
 }
 
 // DefaultConfig returns a Config with sensible defaults for general use.
 func DefaultConfig() Config {
 	return Config{
-		Limit:     100,
-		Window:    time.Minute,
-		KeyPrefix: "capacitor:swlog",
+		Capacity:  20,
+		LeakRate:  5,
+		KeyPrefix: "capacitor:leaky",
 		Timeout:   50 * time.Millisecond,
 	}
 }
@@ -48,16 +45,16 @@ type limiter struct {
 
 var _ capacitor.Capacitor = (*limiter)(nil)
 
-// New creates a sliding-window log Capacitor backed by the given Valkey client.
+// New creates a leaky-bucket Capacitor backed by the given Valkey client.
 func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.Capacitor {
-	if cfg.Limit <= 0 {
-		panic("capacitor: slidingwindowlog: limit must be positive")
+	if cfg.Capacity <= 0 {
+		panic("capacitor: leakybucket: capacity must be positive")
 	}
-	if cfg.Window <= 0 {
-		panic("capacitor: slidingwindowlog: window must be positive")
+	if cfg.LeakRate <= 0 {
+		panic("capacitor: leakybucket: leak rate must be positive")
 	}
 	if cfg.Timeout <= 0 {
-		panic("capacitor: slidingwindowlog: timeout must be positive")
+		panic("capacitor: leakybucket: timeout must be positive")
 	}
 	return &limiter{
 		Base:   &ratelimit.Base{Client: client, Opts: ratelimit.ApplyOptions(opts)},
@@ -80,24 +77,21 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 	defer cancel()
 
 	key := ratelimit.BuildKey(l.config.KeyPrefix, uid)
-	windowSecs := l.config.Window.Seconds()
 	now := ratelimit.NowSeconds()
-	member := fmt.Sprintf("%f:%x", now, randBytes())
 
 	args := []string{
-		strconv.FormatInt(l.config.Limit, 10),
-		strconv.FormatFloat(windowSecs, 'f', -1, 64),
+		strconv.FormatInt(l.config.Capacity, 10),
+		strconv.FormatFloat(l.config.LeakRate, 'f', -1, 64),
 		strconv.FormatFloat(now, 'f', -1, 64),
-		member,
 	}
 
-	res := slidingWindowLogScript.Exec(ctx, l.Client, []string{key}, args)
-	allowedInt, remaining, retryAfterSecs, err := ratelimit.ParseResponse(res, "slidingwindowlog", l.Opts.Logger, uid)
+	res := leakyBucketScript.Exec(ctx, l.Client, []string{key}, args)
+	allowedInt, remaining, retryAfterSecs, err := ratelimit.ParseResponse(res, "leakybucket", l.Opts.Logger, uid)
 	if err != nil {
 		if ratelimit.IsFallbackError(err) {
 			// Fallback result returned directly without recording metrics.
 			// Metrics are only recorded for successful Valkey responses.
-			return capacitor.FallbackResult(l.Opts.Fallback, l.config.Limit, windowSecs), err
+			return capacitor.FallbackResult(l.Opts.Fallback, l.config.Capacity, 1/l.config.LeakRate), err
 		}
 		return capacitor.Result{}, err
 	}
@@ -108,13 +102,7 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 	return capacitor.Result{
 		Allowed:    allowed,
 		Remaining:  remaining,
-		Limit:      l.config.Limit,
+		Limit:      l.config.Capacity,
 		RetryAfter: time.Duration(retryAfterSecs) * time.Second,
 	}, nil
-}
-
-func randBytes() string {
-	b := make([]byte, 4)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%x", b)
 }

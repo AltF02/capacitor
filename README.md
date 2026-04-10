@@ -27,11 +27,11 @@ The algorithms and Lua scripts in Capacitor follow the patterns described in the
 
 | Package | Algorithm | Best for | Valkey data structure | Accuracy |
 |---|---|---|---|---|
-| `bucket/leaky` | Leaky bucket (policing) | Strict no-burst, constant drain | HASH (level + last_leak) | Exact |
+| `leakybucket` | Leaky bucket (policing) | Strict no-burst, constant drain | HASH (level + last_leak) | Exact |
 | `fixedwindow` | Fixed-window counter | Simple, low overhead | STRING (INCR + EXPIRE) | Approximate |
-| `bucket/token` | Token bucket | Controlled bursts with steady average rate | HASH (tokens + last_refill) | Exact |
-| `slidingwindow/counter` | Sliding-window counter | Near-exact accuracy with low memory | STRING x2 (weighted avg) | Near-exact |
-| `slidingwindow/timelog` | Sliding-window log | True rolling window, exact counting | SORTED SET | Exact |
+| `tokenbucket` | Token bucket | Controlled bursts with steady average rate | HASH (tokens + last_refill) | Exact |
+| `slidingwindowcounter` | Sliding-window counter | Near-exact accuracy with low memory | STRING x2 (weighted avg) | Near-exact |
+| `slidingwindowlog` | Sliding-window log | True rolling window, exact counting | SORTED SET | Exact |
 
 ### Choosing an Algorithm
 
@@ -63,7 +63,7 @@ import (
 
 	"github.com/valkey-io/valkey-go"
 	"codeberg.org/matthew/capacitor"
-	"codeberg.org/matthew/capacitor/bucket/leaky"
+	"codeberg.org/matthew/capacitor/leakybucket"
 )
 
 func main() {
@@ -74,7 +74,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	limiter := leaky.New(client, leaky.Config{
+	limiter := leakybucket.New(client, leakybucket.Config{
 		Capacity:  10,
 		LeakRate:  1,
 		Timeout:   500 * time.Millisecond,
@@ -98,9 +98,9 @@ func main() {
 ```go
 import (
 	"codeberg.org/matthew/capacitor/fixedwindow"
-	"codeberg.org/matthew/capacitor/bucket/token"
-	"codeberg.org/matthew/capacitor/slidingwindow/counter"
-	"codeberg.org/matthew/capacitor/slidingwindow/timelog"
+	"codeberg.org/matthew/capacitor/tokenbucket"
+	"codeberg.org/matthew/capacitor/slidingwindowcounter"
+	"codeberg.org/matthew/capacitor/slidingwindowlog"
 )
 
 // Fixed window: 100 requests per minute
@@ -111,21 +111,21 @@ fw := fixedwindow.New(client, fixedwindow.Config{
 })
 
 // Token bucket: burst up to 20, refill 5/sec
-tb := token.New(client, token.Config{
+tb := tokenbucket.New(client, tokenbucket.Config{
 	Capacity:   20,
 	RefillRate: 5,
 	Timeout:    50 * time.Millisecond,
 })
 
 // Sliding window counter: 100 requests per minute (near-exact)
-swc := counter.New(client, counter.Config{
+swc := slidingwindowcounter.New(client, slidingwindowcounter.Config{
 	Limit:   100,
 	Window:  time.Minute,
 	Timeout: 50 * time.Millisecond,
 })
 
 // Sliding window log: 100 requests per minute (exact)
-swl := timelog.New(client, timelog.Config{
+swl := slidingwindowlog.New(client, slidingwindowlog.Config{
 	Limit:   100,
 	Window:  time.Minute,
 	Timeout: 50 * time.Millisecond,
@@ -218,8 +218,8 @@ Use `WithProfiles` and `WithClassifier` to apply different rate limits based on 
 
 ```go
 profiles := capacitor.ProfileConfig{
-	"basic":   leaky.New(client, leaky.Config{Capacity: 10, LeakRate: 1, Timeout: 50 * time.Millisecond}),
-	"premium": leaky.New(client, leaky.Config{Capacity: 100, LeakRate: 10, Timeout: 50 * time.Millisecond}),
+	"basic":   leakybucket.New(client, leakybucket.Config{Capacity: 10, LeakRate: 1, Timeout: 50 * time.Millisecond}),
+	"premium": leakybucket.New(client, leakybucket.Config{Capacity: 100, LeakRate: 10, Timeout: 50 * time.Millisecond}),
 }
 
 rl := capacitor.NewMiddleware(defaultLimiter,
@@ -239,7 +239,7 @@ rl := capacitor.NewMiddleware(defaultLimiter,
 ```go
 profiles := capacitor.ProfileConfig{
 	"basic":   fixedwindow.New(client, fixedwindow.Config{Limit: 10, Window: time.Minute, Timeout: 50 * time.Millisecond}),
-	"premium": token.New(client, token.Config{Capacity: 100, RefillRate: 10, Timeout: 50 * time.Millisecond}),
+	"premium": tokenbucket.New(client, tokenbucket.Config{Capacity: 100, RefillRate: 10, Timeout: 50 * time.Millisecond}),
 }
 ```
 
