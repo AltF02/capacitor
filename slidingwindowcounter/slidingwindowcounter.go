@@ -7,13 +7,13 @@ package slidingwindowcounter
 import (
 	"context"
 	_ "embed"
-	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
 
 	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/internal/ratelimit"
 )
 
 //go:embed script.lua
@@ -40,9 +40,8 @@ func DefaultConfig() Config {
 }
 
 type limiter struct {
-	client valkey.Client
+	*ratelimit.Base
 	config Config
-	opts   capacitor.Options
 }
 
 var _ capacitor.Capacitor = (*limiter)(nil)
@@ -58,33 +57,32 @@ func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.C
 	if cfg.Timeout <= 0 {
 		panic("capacitor: slidingwindowcounter: timeout must be positive")
 	}
-	o := capacitor.DefaultOptions()
-	for _, opt := range opts {
-		opt(&o)
+	return &limiter{
+		Base:   &ratelimit.Base{Client: client, Opts: ratelimit.ApplyOptions(opts)},
+		config: cfg,
 	}
-	return &limiter{client: client, config: cfg, opts: o}
 }
 
 func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, error) {
+	// Record total method wall-clock time, including validation
 	start := time.Now()
-	if l.opts.Metrics != nil {
-		defer func() { l.opts.Metrics.RecordLatency(time.Since(start)) }()
+	if l.Opts.Metrics != nil {
+		defer func() { l.Opts.Metrics.RecordLatency(time.Since(start)) }()
 	}
 
-	if uid == "" {
-		return capacitor.Result{}, capacitor.ErrEmptyUID
+	if err := l.CheckUID(uid); err != nil {
+		return capacitor.Result{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, l.config.Timeout)
 	defer cancel()
 
 	windowSecs := l.config.Window.Seconds()
-	now := float64(time.Now().UnixMilli()) / 1000.0
+	now := ratelimit.NowSeconds()
 	windowNum := int64(now / windowSecs)
 
-	baseKey := l.config.KeyPrefix + ":uid:" + uid
-	prevKey := "{" + baseKey + "}:" + strconv.FormatInt(windowNum-1, 10)
-	currKey := "{" + baseKey + "}:" + strconv.FormatInt(windowNum, 10)
+	baseKey := ratelimit.BuildKey(l.config.KeyPrefix, uid)
+	prevKey, currKey := ratelimit.BuildClusterKeys(baseKey, windowNum)
 
 	args := []string{
 		strconv.FormatInt(l.config.Limit, 10),
@@ -92,46 +90,19 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		strconv.FormatFloat(now, 'f', -1, 64),
 	}
 
-	res := slidingWindowCounterScript.Exec(ctx, l.client, []string{prevKey, currKey}, args)
-	if err := res.Error(); err != nil {
-		l.opts.Logger.Error("valkey eval failed", "error", err, "uid", uid)
-		return capacitor.FallbackResult(l.opts.Fallback, l.config.Limit, windowSecs),
-			fmt.Errorf("capacitor: slidingwindowcounter: eval: %w", err)
-	}
-
-	arr, err := res.ToArray()
+	res := slidingWindowCounterScript.Exec(ctx, l.Client, []string{prevKey, currKey}, args)
+	allowedInt, remaining, retryAfterSecs, err := ratelimit.ParseResponse(res, "slidingwindowcounter", l.Opts.Logger, uid)
 	if err != nil {
-		l.opts.Logger.Error("valkey response parse failed", "error", err)
-		return capacitor.FallbackResult(l.opts.Fallback, l.config.Limit, windowSecs),
-			fmt.Errorf("capacitor: slidingwindowcounter: response: %w", err)
-	}
-	if len(arr) != 3 {
-		l.opts.Logger.Error("unexpected eval response length", "len", len(arr))
-		return capacitor.FallbackResult(l.opts.Fallback, l.config.Limit, windowSecs),
-			fmt.Errorf("%w: expected 3 elements, got %d", capacitor.ErrEvalResponse, len(arr))
-	}
-
-	allowedInt, err := arr[0].ToInt64()
-	if err != nil {
-		return capacitor.Result{}, fmt.Errorf("capacitor: slidingwindowcounter: parse allowed: %w", err)
-	}
-	remaining, err := arr[1].ToInt64()
-	if err != nil {
-		return capacitor.Result{}, fmt.Errorf("capacitor: slidingwindowcounter: parse remaining: %w", err)
-	}
-	retryAfterSecs, err := arr[2].ToInt64()
-	if err != nil {
-		return capacitor.Result{}, fmt.Errorf("capacitor: slidingwindowcounter: parse retry_after: %w", err)
+		if ratelimit.IsFallbackError(err) {
+			// Fallback result returned directly without recording metrics.
+			// Metrics are only recorded for successful Valkey responses.
+			return capacitor.FallbackResult(l.Opts.Fallback, l.config.Limit, windowSecs), err
+		}
+		return capacitor.Result{}, err
 	}
 
 	allowed := allowedInt == 1
-
-	if l.opts.Metrics != nil {
-		l.opts.Metrics.RecordAttempt(uid)
-		if !allowed {
-			l.opts.Metrics.RecordDenied(uid)
-		}
-	}
+	l.RecordMetrics(uid, allowed)
 
 	return capacitor.Result{
 		Allowed:    allowed,
@@ -139,14 +110,4 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		Limit:      l.config.Limit,
 		RetryAfter: time.Duration(retryAfterSecs) * time.Second,
 	}, nil
-}
-
-func (l *limiter) HealthCheck(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	return l.client.Do(ctx, l.client.B().Ping().Build()).Error()
-}
-
-func (l *limiter) Close() {
-	l.client.Close()
 }

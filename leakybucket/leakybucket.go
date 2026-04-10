@@ -6,13 +6,13 @@ package leakybucket
 import (
 	"context"
 	_ "embed"
-	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
 
 	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/internal/ratelimit"
 )
 
 //go:embed script.lua
@@ -39,9 +39,8 @@ func DefaultConfig() Config {
 }
 
 type limiter struct {
-	client valkey.Client
+	*ratelimit.Base
 	config Config
-	opts   capacitor.Options
 }
 
 var _ capacitor.Capacitor = (*limiter)(nil)
@@ -57,28 +56,28 @@ func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.C
 	if cfg.Timeout <= 0 {
 		panic("capacitor: leakybucket: timeout must be positive")
 	}
-	o := capacitor.DefaultOptions()
-	for _, opt := range opts {
-		opt(&o)
+	return &limiter{
+		Base:   &ratelimit.Base{Client: client, Opts: ratelimit.ApplyOptions(opts)},
+		config: cfg,
 	}
-	return &limiter{client: client, config: cfg, opts: o}
 }
 
 func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, error) {
+	// Record total method wall-clock time, including validation
 	start := time.Now()
-	if l.opts.Metrics != nil {
-		defer func() { l.opts.Metrics.RecordLatency(time.Since(start)) }()
+	if l.Opts.Metrics != nil {
+		defer func() { l.Opts.Metrics.RecordLatency(time.Since(start)) }()
 	}
 
-	if uid == "" {
-		return capacitor.Result{}, capacitor.ErrEmptyUID
+	if err := l.CheckUID(uid); err != nil {
+		return capacitor.Result{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, l.config.Timeout)
 	defer cancel()
 
-	key := l.config.KeyPrefix + ":uid:" + uid
-	now := float64(time.Now().UnixMilli()) / 1000.0
+	key := ratelimit.BuildKey(l.config.KeyPrefix, uid)
+	now := ratelimit.NowSeconds()
 
 	args := []string{
 		strconv.FormatInt(l.config.Capacity, 10),
@@ -86,46 +85,19 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		strconv.FormatFloat(now, 'f', -1, 64),
 	}
 
-	res := leakyBucketScript.Exec(ctx, l.client, []string{key}, args)
-	if err := res.Error(); err != nil {
-		l.opts.Logger.Error("valkey eval failed", "error", err, "uid", uid)
-		return capacitor.FallbackResult(l.opts.Fallback, l.config.Capacity, 1/l.config.LeakRate),
-			fmt.Errorf("capacitor: leakybucket: eval: %w", err)
-	}
-
-	arr, err := res.ToArray()
+	res := leakyBucketScript.Exec(ctx, l.Client, []string{key}, args)
+	allowedInt, remaining, retryAfterSecs, err := ratelimit.ParseResponse(res, "leakybucket", l.Opts.Logger, uid)
 	if err != nil {
-		l.opts.Logger.Error("valkey response parse failed", "error", err)
-		return capacitor.FallbackResult(l.opts.Fallback, l.config.Capacity, 1/l.config.LeakRate),
-			fmt.Errorf("capacitor: leakybucket: response: %w", err)
-	}
-	if len(arr) != 3 {
-		l.opts.Logger.Error("unexpected eval response length", "len", len(arr))
-		return capacitor.FallbackResult(l.opts.Fallback, l.config.Capacity, 1/l.config.LeakRate),
-			fmt.Errorf("%w: expected 3 elements, got %d", capacitor.ErrEvalResponse, len(arr))
-	}
-
-	allowedInt, err := arr[0].ToInt64()
-	if err != nil {
-		return capacitor.Result{}, fmt.Errorf("capacitor: leakybucket: parse allowed: %w", err)
-	}
-	remaining, err := arr[1].ToInt64()
-	if err != nil {
-		return capacitor.Result{}, fmt.Errorf("capacitor: leakybucket: parse remaining: %w", err)
-	}
-	retryAfterSecs, err := arr[2].ToInt64()
-	if err != nil {
-		return capacitor.Result{}, fmt.Errorf("capacitor: leakybucket: parse retry_after: %w", err)
+		if ratelimit.IsFallbackError(err) {
+			// Fallback result returned directly without recording metrics.
+			// Metrics are only recorded for successful Valkey responses.
+			return capacitor.FallbackResult(l.Opts.Fallback, l.config.Capacity, 1/l.config.LeakRate), err
+		}
+		return capacitor.Result{}, err
 	}
 
 	allowed := allowedInt == 1
-
-	if l.opts.Metrics != nil {
-		l.opts.Metrics.RecordAttempt(uid)
-		if !allowed {
-			l.opts.Metrics.RecordDenied(uid)
-		}
-	}
+	l.RecordMetrics(uid, allowed)
 
 	return capacitor.Result{
 		Allowed:    allowed,
@@ -133,14 +105,4 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		Limit:      l.config.Capacity,
 		RetryAfter: time.Duration(retryAfterSecs) * time.Second,
 	}, nil
-}
-
-func (l *limiter) HealthCheck(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	return l.client.Do(ctx, l.client.B().Ping().Build()).Error()
-}
-
-func (l *limiter) Close() {
-	l.client.Close()
 }

@@ -1,7 +1,6 @@
 package capacitor_test
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"testing"
@@ -77,7 +76,7 @@ func TestAttempt(t *testing.T) {
 			}
 
 			lim := leakybucket.New(client, cfg)
-			actualRes, err := lim.Attempt(context.Background(), c.uid)
+			actualRes, err := lim.Attempt(t.Context(), c.uid)
 
 			if !errors.Is(err, c.expectedErr) {
 				t.Fatalf("Attempt() error; got = %v, want = %v", err, c.expectedErr)
@@ -129,7 +128,7 @@ func TestAttempt_Fallback(t *testing.T) {
 				capacitor.WithFallback(c.fallback),
 				capacitor.WithLogger(slog.Default()),
 			)
-			actualRes, err := lim.Attempt(context.Background(), "user:1")
+			actualRes, err := lim.Attempt(t.Context(), "user:1")
 
 			if err == nil {
 				t.Fatal("expected error, got nil")
@@ -189,7 +188,7 @@ func TestAttempt_Metrics(t *testing.T) {
 
 			mMock := &testutil.MetricsMock{}
 			lim := leakybucket.New(client, cfg, capacitor.WithMetrics(mMock))
-			_, err := lim.Attempt(context.Background(), c.uid)
+			_, err := lim.Attempt(t.Context(), c.uid)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
