@@ -10,7 +10,7 @@ local capacity = tonumber(ARGV[1])
 local refill_rate = tonumber(ARGV[2])
 local now = tonumber(ARGV[3])
 
-local data = valkey.call('HGETALL', key)
+local data = redis.call('HGETALL', key)
 local tokens = capacity
 local last_refill = now
 
@@ -39,7 +39,7 @@ else
   if retry_after < 1 then retry_after = 1 end
 end
 
-valkey.call('HSET', key, 'tokens', tostring(tokens), 'last_refill', tostring(now))
-valkey.call('EXPIRE', key, math.ceil(capacity / refill_rate) + 1)
+redis.call('HSET', key, 'tokens', tostring(tokens), 'last_refill', tostring(now))
+redis.call('EXPIRE', key, math.ceil(capacity / refill_rate) + 1)
 
 return { allowed, remaining, retry_after }
