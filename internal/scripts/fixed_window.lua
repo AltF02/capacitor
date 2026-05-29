@@ -8,12 +8,12 @@ local key = KEYS[1]
 local limit = tonumber(ARGV[1])
 local window = tonumber(ARGV[2])
 
-local count = valkey.call('INCR', key)
+local count = redis.call('INCR', key)
 if count == 1 then
-    valkey.call('PEXPIRE', key, window * 1000)
+    redis.call('PEXPIRE', key, window * 1000)
 end
 
-local ttl = valkey.call('PTTL', key)
+local ttl = redis.call('PTTL', key)
 local allowed = 0
 local remaining = 0
 local retry_after = 0

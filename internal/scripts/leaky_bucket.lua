@@ -11,7 +11,7 @@ local capacity = tonumber(ARGV[1])
 local leak_rate = tonumber(ARGV[2])
 local now = tonumber(ARGV[3])
 
-local data = valkey.call('HGETALL', key)
+local data = redis.call('HGETALL', key)
 local level = 0
 local last_leak = now
 
@@ -41,7 +41,7 @@ else
   if retry_after < 1 then retry_after = 1 end
 end
 
-valkey.call('HSET', key, 'level', tostring(level), 'last_leak', tostring(now))
-valkey.call('EXPIRE', key, math.ceil(capacity / leak_rate) * 2)
+redis.call('HSET', key, 'level', tostring(level), 'last_leak', tostring(now))
+redis.call('EXPIRE', key, math.ceil(capacity / leak_rate) * 2)
 
 return { allowed, remaining, retry_after }

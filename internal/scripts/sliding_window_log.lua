@@ -14,23 +14,23 @@ local now = tonumber(ARGV[3])
 local member = ARGV[4]
 
 local window_start = now - window
-valkey.call('ZREMRANGEBYSCORE', key, '-inf', window_start)
+redis.call('ZREMRANGEBYSCORE', key, '-inf', window_start)
 
-local count = valkey.call('ZCARD', key)
+local count = redis.call('ZCARD', key)
 
 local allowed = 0
 local remaining = 0
 local retry_after = 0
 
 if count < limit then
-    valkey.call('ZADD', key, now, member)
-    valkey.call('EXPIRE', key, math.ceil(window) + 1)
+    redis.call('ZADD', key, now, member)
+    redis.call('EXPIRE', key, math.ceil(window) + 1)
     count = count + 1
     allowed = 1
     remaining = limit - count
 else
     remaining = 0
-    local oldest = valkey.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
     if #oldest >= 2 then
         local oldest_time = tonumber(oldest[2])
         retry_after = math.ceil(oldest_time + window - now)
