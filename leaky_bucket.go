@@ -1,36 +1,27 @@
-// Package leaky implements a leaky-bucket (policing) rate limiter
-// backed by Valkey. The bucket drains at a constant rate; requests that
-// arrive when the bucket is full are denied.
-package leaky
+package capacitor
 
 import (
 	"context"
-	_ "embed"
 	"strconv"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
 
-	"codeberg.org/matthew/capacitor"
 	"codeberg.org/matthew/capacitor/internal/ratelimit"
+	"codeberg.org/matthew/capacitor/internal/scripts"
 )
 
-//go:embed script.lua
-var luaLeakyBucket string
-
-var leakyBucketScript = valkey.NewLuaScript(luaLeakyBucket)
-
-// Config defines the parameters for a leaky-bucket rate limiter.
-type Config struct {
+// LeakyBucketConfig defines the parameters for a leaky-bucket rate limiter.
+type LeakyBucketConfig struct {
 	Capacity  int64         // maximum number of requests the bucket can hold
 	LeakRate  float64       // requests drained per second
 	KeyPrefix string        // Valkey key prefix for bucket storage
 	Timeout   time.Duration // per-operation Valkey timeout
 }
 
-// DefaultConfig returns a Config with sensible defaults for general use.
-func DefaultConfig() Config {
-	return Config{
+// NewLeakyBucketDefaultConfig returns a LeakyBucketConfig with sensible defaults.
+func NewLeakyBucketDefaultConfig() LeakyBucketConfig {
+	return LeakyBucketConfig{
 		Capacity:  20,
 		LeakRate:  5,
 		KeyPrefix: "capacitor:leaky",
@@ -38,15 +29,15 @@ func DefaultConfig() Config {
 	}
 }
 
-type limiter struct {
+type leakyBucket struct {
 	*ratelimit.Base
-	config Config
+	config LeakyBucketConfig
 }
 
-var _ capacitor.Capacitor = (*limiter)(nil)
+var _ Capacitor = (*leakyBucket)(nil)
 
-// New creates a leaky-bucket Capacitor backed by the given Valkey client.
-func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.Capacitor {
+// NewLeakyBucket creates a leaky-bucket Capacitor backed by the given Valkey client.
+func NewLeakyBucket(client valkey.Client, cfg LeakyBucketConfig, opts ...Option) Capacitor {
 	if cfg.Capacity <= 0 {
 		panic("capacitor: leakybucket: capacity must be positive")
 	}
@@ -56,21 +47,20 @@ func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.C
 	if cfg.Timeout <= 0 {
 		panic("capacitor: leakybucket: timeout must be positive")
 	}
-	return &limiter{
+	return &leakyBucket{
 		Base:   &ratelimit.Base{Client: client, Opts: ratelimit.ApplyOptions(opts)},
 		config: cfg,
 	}
 }
 
-func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, error) {
-	// Record total method wall-clock time, including validation
+func (l *leakyBucket) Attempt(ctx context.Context, uid string) (Result, error) {
 	start := time.Now()
 	if l.Opts.Metrics != nil {
 		defer func() { l.Opts.Metrics.RecordLatency(time.Since(start)) }()
 	}
 
 	if err := l.CheckUID(uid); err != nil {
-		return capacitor.Result{}, err
+		return Result{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, l.config.Timeout)
@@ -85,21 +75,19 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		strconv.FormatFloat(now, 'f', -1, 64),
 	}
 
-	res := leakyBucketScript.Exec(ctx, l.Client, []string{key}, args)
+	res := scripts.LeakyBucket.Exec(ctx, l.Client, []string{key}, args)
 	allowedInt, remaining, retryAfterSecs, err := ratelimit.ParseResponse(res, "leakybucket", l.Opts.Logger, uid)
 	if err != nil {
 		if ratelimit.IsFallbackError(err) {
-			// Fallback result returned directly without recording metrics.
-			// Metrics are only recorded for successful Valkey responses.
-			return capacitor.FallbackResult(l.Opts.Fallback, l.config.Capacity, 1/l.config.LeakRate), err
+			return FallbackResult(l.Opts.Fallback, l.config.Capacity, 1/l.config.LeakRate), err
 		}
-		return capacitor.Result{}, err
+		return Result{}, err
 	}
 
 	allowed := allowedInt == 1
 	l.RecordMetrics(uid, allowed)
 
-	return capacitor.Result{
+	return Result{
 		Allowed:    allowed,
 		Remaining:  remaining,
 		Limit:      l.config.Capacity,

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"codeberg.org/matthew/capacitor"
-	"codeberg.org/matthew/capacitor/bucket/leaky"
 	"codeberg.org/matthew/capacitor/internal/testutil"
 
 	"github.com/google/go-cmp/cmp"
@@ -16,7 +15,7 @@ import (
 )
 
 func TestAttempt(t *testing.T) {
-	cfg := leaky.DefaultConfig()
+	cfg := capacitor.NewLeakyBucketDefaultConfig()
 
 	cases := map[string]struct {
 		uid            string
@@ -75,7 +74,7 @@ func TestAttempt(t *testing.T) {
 					)))
 			}
 
-			lim := leaky.New(client, cfg)
+			lim := capacitor.NewLeakyBucket(client, cfg)
 			actualRes, err := lim.Attempt(t.Context(), c.uid)
 
 			if !errors.Is(err, c.expectedErr) {
@@ -90,7 +89,7 @@ func TestAttempt(t *testing.T) {
 }
 
 func TestAttempt_Fallback(t *testing.T) {
-	cfg := leaky.DefaultConfig()
+	cfg := capacitor.NewLeakyBucketDefaultConfig()
 
 	cases := map[string]struct {
 		fallback       capacitor.FallbackStrategy
@@ -124,7 +123,8 @@ func TestAttempt_Fallback(t *testing.T) {
 				Do(gomock.Any(), gomock.Any()).
 				Return(mock.Result(mock.ValkeyError("ERR test error")))
 
-			lim := leaky.New(client, cfg,
+			lim := capacitor.NewLeakyBucket(
+				client, cfg,
 				capacitor.WithFallback(c.fallback),
 				capacitor.WithLogger(slog.Default()),
 			)
@@ -142,7 +142,7 @@ func TestAttempt_Fallback(t *testing.T) {
 }
 
 func TestAttempt_Metrics(t *testing.T) {
-	cfg := leaky.DefaultConfig()
+	cfg := capacitor.NewLeakyBucketDefaultConfig()
 
 	cases := map[string]struct {
 		uid             string
@@ -187,7 +187,7 @@ func TestAttempt_Metrics(t *testing.T) {
 				)))
 
 			mMock := &testutil.MetricsMock{}
-			lim := leaky.New(client, cfg, capacitor.WithMetrics(mMock))
+			lim := capacitor.NewLeakyBucket(client, cfg, capacitor.WithMetrics(mMock))
 			_, err := lim.Attempt(t.Context(), c.uid)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

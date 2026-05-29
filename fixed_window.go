@@ -1,36 +1,27 @@
-// Package fixedwindow implements a fixed-window counter rate limiter
-// backed by Valkey. Requests are counted within discrete time windows;
-// the counter resets when the window expires.
-package fixedwindow
+package capacitor
 
 import (
 	"context"
-	_ "embed"
 	"strconv"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
 
-	"codeberg.org/matthew/capacitor"
 	"codeberg.org/matthew/capacitor/internal/ratelimit"
+	"codeberg.org/matthew/capacitor/internal/scripts"
 )
 
-//go:embed script.lua
-var luaFixedWindow string
-
-var fixedWindowScript = valkey.NewLuaScript(luaFixedWindow)
-
-// Config defines the parameters for a fixed-window rate limiter.
-type Config struct {
+// FixedWindowConfig defines the parameters for a fixed-window rate limiter.
+type FixedWindowConfig struct {
 	Limit     int64         // maximum requests per window
 	Window    time.Duration // window duration
 	KeyPrefix string        // Valkey key prefix
 	Timeout   time.Duration // per-operation Valkey timeout
 }
 
-// DefaultConfig returns a Config with sensible defaults for general use.
-func DefaultConfig() Config {
-	return Config{
+// NewFixedWindowDefaultConfig returns a FixedWindowConfig with sensible defaults.
+func NewFixedWindowDefaultConfig() FixedWindowConfig {
+	return FixedWindowConfig{
 		Limit:     100,
 		Window:    time.Minute,
 		KeyPrefix: "capacitor:fixedwin",
@@ -38,15 +29,15 @@ func DefaultConfig() Config {
 	}
 }
 
-type limiter struct {
+type fixedWindow struct {
 	*ratelimit.Base
-	config Config
+	config FixedWindowConfig
 }
 
-var _ capacitor.Capacitor = (*limiter)(nil)
+var _ Capacitor = (*fixedWindow)(nil)
 
-// New creates a fixed-window Capacitor backed by the given Valkey client.
-func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.Capacitor {
+// NewFixedWindow creates a fixed-window Capacitor backed by the given Valkey client.
+func NewFixedWindow(client valkey.Client, cfg FixedWindowConfig, opts ...Option) Capacitor {
 	if cfg.Limit <= 0 {
 		panic("capacitor: fixedwindow: limit must be positive")
 	}
@@ -56,21 +47,20 @@ func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.C
 	if cfg.Timeout <= 0 {
 		panic("capacitor: fixedwindow: timeout must be positive")
 	}
-	return &limiter{
+	return &fixedWindow{
 		Base:   &ratelimit.Base{Client: client, Opts: ratelimit.ApplyOptions(opts)},
 		config: cfg,
 	}
 }
 
-func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, error) {
-	// Record total method wall-clock time, including validation
+func (l *fixedWindow) Attempt(ctx context.Context, uid string) (Result, error) {
 	start := time.Now()
 	if l.Opts.Metrics != nil {
 		defer func() { l.Opts.Metrics.RecordLatency(time.Since(start)) }()
 	}
 
 	if err := l.CheckUID(uid); err != nil {
-		return capacitor.Result{}, err
+		return Result{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, l.config.Timeout)
@@ -84,21 +74,19 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		strconv.FormatFloat(windowSecs, 'f', -1, 64),
 	}
 
-	res := fixedWindowScript.Exec(ctx, l.Client, []string{key}, args)
+	res := scripts.FixedWindow.Exec(ctx, l.Client, []string{key}, args)
 	allowedInt, remaining, retryAfterSecs, err := ratelimit.ParseResponse(res, "fixedwindow", l.Opts.Logger, uid)
 	if err != nil {
 		if ratelimit.IsFallbackError(err) {
-			// Fallback result returned directly without recording metrics.
-			// Metrics are only recorded for successful Valkey responses.
-			return capacitor.FallbackResult(l.Opts.Fallback, l.config.Limit, windowSecs), err
+			return FallbackResult(l.Opts.Fallback, l.config.Limit, windowSecs), err
 		}
-		return capacitor.Result{}, err
+		return Result{}, err
 	}
 
 	allowed := allowedInt == 1
 	l.RecordMetrics(uid, allowed)
 
-	return capacitor.Result{
+	return Result{
 		Allowed:    allowed,
 		Remaining:  remaining,
 		Limit:      l.config.Limit,

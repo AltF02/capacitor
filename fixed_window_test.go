@@ -1,4 +1,4 @@
-package counter_test
+package capacitor_test
 
 import (
 	"testing"
@@ -6,18 +6,17 @@ import (
 
 	"codeberg.org/matthew/capacitor"
 	"codeberg.org/matthew/capacitor/internal/testutil"
-	"codeberg.org/matthew/capacitor/slidingwindow/counter"
 
 	"github.com/valkey-io/valkey-go"
 )
 
-func ctor(t *testing.T, client valkey.Client, opts ...capacitor.Option) capacitor.Capacitor {
+func fixedWindowCtor(t *testing.T, client valkey.Client, opts ...capacitor.Option) capacitor.Capacitor {
 	t.Helper()
-	return counter.New(client, counter.DefaultConfig(), opts...)
+	return capacitor.NewFixedWindow(client, capacitor.NewFixedWindowDefaultConfig(), opts...)
 }
 
-func TestAttempt(t *testing.T) {
-	testutil.RunAttemptCases(t, ctor, map[string]testutil.AttemptCase{
+func TestFixedWindow(t *testing.T) {
+	testutil.RunAttemptCases(t, fixedWindowCtor, map[string]testutil.AttemptCase{
 		"empty uid returns error": {
 			UID:            "",
 			MockValkey:     false,
@@ -40,20 +39,20 @@ func TestAttempt(t *testing.T) {
 			UID:        "user:1",
 			Allowed:    false,
 			Remaining:  0,
-			RetryAfter: 45,
+			RetryAfter: 30,
 			MockValkey: true,
 			ExpectedResult: capacitor.Result{
 				Allowed:    false,
 				Remaining:  0,
 				Limit:      100,
-				RetryAfter: 45 * time.Second,
+				RetryAfter: 30 * time.Second,
 			},
 		},
 	})
 }
 
-func TestAttempt_Fallback(t *testing.T) {
-	testutil.RunFallbackCases(t, ctor, map[string]testutil.FallbackCase{
+func TestFixedWindow_Fallback(t *testing.T) {
+	testutil.RunFallbackCases(t, fixedWindowCtor, map[string]testutil.FallbackCase{
 		"fail open on valkey error": {
 			Fallback: capacitor.FallbackFailOpen,
 			ExpectedResult: capacitor.Result{
@@ -74,8 +73,8 @@ func TestAttempt_Fallback(t *testing.T) {
 	})
 }
 
-func TestAttempt_Metrics(t *testing.T) {
-	testutil.RunMetricsCases(t, ctor, map[string]testutil.MetricsCase{
+func TestFixedWindow_Metrics(t *testing.T) {
+	testutil.RunMetricsCases(t, fixedWindowCtor, map[string]testutil.MetricsCase{
 		"allowed records attempt and latency": {
 			UID:             "user:1",
 			Allowed:         true,
@@ -89,7 +88,7 @@ func TestAttempt_Metrics(t *testing.T) {
 			UID:             "user:2",
 			Allowed:         false,
 			Remaining:       0,
-			RetryAfter:      45,
+			RetryAfter:      30,
 			ExpectAttempts:  []string{"user:2"},
 			ExpectDenied:    []string{"user:2"},
 			ExpectLatencies: 1,

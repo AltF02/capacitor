@@ -25,13 +25,13 @@ Requires Go 1.22+ and a running Valkey (or Redis 7+) instance.
 
 The algorithms and Lua scripts in Capacitor follow the patterns described in the [Redis rate limiting tutorial](https://redis.io/tutorials/howtos/ratelimiting/), which covers the tradeoffs between all five approaches in depth.
 
-| Package | Algorithm | Best for | Valkey data structure | Accuracy |
+| Constructor | Algorithm | Best for | Valkey data structure | Accuracy |
 |---|---|---|---|---|
-| `bucket/leaky` | Leaky bucket (policing) | Strict no-burst, constant drain | HASH (level + last_leak) | Exact |
-| `fixedwindow` | Fixed-window counter | Simple, low overhead | STRING (INCR + EXPIRE) | Approximate |
-| `bucket/token` | Token bucket | Controlled bursts with steady average rate | HASH (tokens + last_refill) | Exact |
-| `slidingwindow/counter` | Sliding-window counter | Near-exact accuracy with low memory | STRING x2 (weighted avg) | Near-exact |
-| `slidingwindow/timelog` | Sliding-window log | True rolling window, exact counting | SORTED SET | Exact |
+| `NewLeakyBucket` | Leaky bucket (policing) | Strict no-burst, constant drain | HASH (level + last_leak) | Exact |
+| `NewFixedWindow` | Fixed-window counter | Simple, low overhead | STRING (INCR + EXPIRE) | Approximate |
+| `NewTokenBucket` | Token bucket | Controlled bursts with steady average rate | HASH (tokens + last_refill) | Exact |
+| `NewSlidingWindowCounter` | Sliding-window counter | Near-exact accuracy with low memory | STRING x2 (weighted avg) | Near-exact |
+| `NewSlidingTimeLog` | Sliding-window log | True rolling window, exact counting | SORTED SET | Exact |
 
 ### Choosing an Algorithm
 
@@ -63,7 +63,6 @@ import (
 
 	"github.com/valkey-io/valkey-go"
 	"codeberg.org/matthew/capacitor"
-	"codeberg.org/matthew/capacitor/bucket/leaky"
 )
 
 func main() {
@@ -74,7 +73,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	limiter := leaky.New(client, leaky.Config{
+	limiter := capacitor.NewLeakyBucket(client, capacitor.LeakyBucketConfig{
 		Capacity:  10,
 		LeakRate:  1,
 		Timeout:   500 * time.Millisecond,
@@ -96,45 +95,46 @@ func main() {
 ### Using Other Algorithms
 
 ```go
-import (
-	"codeberg.org/matthew/capacitor/fixedwindow"
-	"codeberg.org/matthew/capacitor/bucket/token"
-	"codeberg.org/matthew/capacitor/slidingwindow/counter"
-	"codeberg.org/matthew/capacitor/slidingwindow/timelog"
-)
-
 // Fixed window: 100 requests per minute
-fw := fixedwindow.New(client, fixedwindow.Config{
+fw := capacitor.NewFixedWindow(client, capacitor.FixedWindowConfig{
 	Limit:   100,
 	Window:  time.Minute,
 	Timeout: 50 * time.Millisecond,
 })
 
 // Token bucket: burst up to 20, refill 5/sec
-tb := token.New(client, token.Config{
+tb := capacitor.NewTokenBucket(client, capacitor.TokenBucketConfig{
 	Capacity:   20,
 	RefillRate: 5,
 	Timeout:    50 * time.Millisecond,
 })
 
 // Sliding window counter: 100 requests per minute (near-exact)
-swc := counter.New(client, counter.Config{
+swc := capacitor.NewSlidingWindowCounter(client, capacitor.SlidingWindowCounterConfig{
 	Limit:   100,
 	Window:  time.Minute,
 	Timeout: 50 * time.Millisecond,
 })
 
 // Sliding window log: 100 requests per minute (exact)
-swl := timelog.New(client, timelog.Config{
+swl := capacitor.NewSlidingTimeLog(client, capacitor.SlidingTimeLogConfig{
 	Limit:   100,
 	Window:  time.Minute,
 	Timeout: 50 * time.Millisecond,
 })
 ```
 
+Each algorithm also has a default config constructor:
+
+```go
+cfg := capacitor.NewLeakyBucketDefaultConfig()
+cfg.Capacity = 50 // customize specific fields
+limiter := capacitor.NewLeakyBucket(client, cfg)
+```
+
 ## Configuration
 
-Each algorithm has its own `Config` struct:
+Each algorithm has its own config struct (`LeakyBucketConfig`, `TokenBucketConfig`, etc.). Use the corresponding `NewXxxDefaultConfig()` constructor for sensible defaults.
 
 ### Leaky Bucket / Token Bucket
 
@@ -154,7 +154,7 @@ Each algorithm has its own `Config` struct:
 | `KeyPrefix` | `string` | Prefix for Valkey keys |
 | `Timeout` | `time.Duration` | Per-call Valkey timeout |
 
-All config fields are validated in `New()`: zero or negative values panic (programmer errors).
+All config fields are validated in `NewXxx()`: zero or negative values panic (programmer errors).
 
 ## Middleware Options
 
@@ -193,7 +193,7 @@ rl := capacitor.NewMiddleware(limiter,
 
 ## Limiter Options
 
-Pass these to any algorithm's `New()`:
+Pass these to any algorithm's `NewXxx()`:
 
 | Option | Description |
 |---|---|
@@ -218,8 +218,8 @@ Use `WithProfiles` and `WithClassifier` to apply different rate limits based on 
 
 ```go
 profiles := capacitor.ProfileConfig{
-	"basic":   leaky.New(client, leaky.Config{Capacity: 10, LeakRate: 1, Timeout: 50 * time.Millisecond}),
-	"premium": leaky.New(client, leaky.Config{Capacity: 100, LeakRate: 10, Timeout: 50 * time.Millisecond}),
+	"basic":   capacitor.NewLeakyBucket(client, capacitor.LeakyBucketConfig{Capacity: 10, LeakRate: 1, Timeout: 50 * time.Millisecond}),
+	"premium": capacitor.NewLeakyBucket(client, capacitor.LeakyBucketConfig{Capacity: 100, LeakRate: 10, Timeout: 50 * time.Millisecond}),
 }
 
 rl := capacitor.NewMiddleware(defaultLimiter,
@@ -238,8 +238,8 @@ rl := capacitor.NewMiddleware(defaultLimiter,
 
 ```go
 profiles := capacitor.ProfileConfig{
-	"basic":   fixedwindow.New(client, fixedwindow.Config{Limit: 10, Window: time.Minute, Timeout: 50 * time.Millisecond}),
-	"premium": token.New(client, token.Config{Capacity: 100, RefillRate: 10, Timeout: 50 * time.Millisecond}),
+	"basic":   capacitor.NewFixedWindow(client, capacitor.FixedWindowConfig{Limit: 10, Window: time.Minute, Timeout: 50 * time.Millisecond}),
+	"premium": capacitor.NewTokenBucket(client, capacitor.TokenBucketConfig{Capacity: 100, RefillRate: 10, Timeout: 50 * time.Millisecond}),
 }
 ```
 

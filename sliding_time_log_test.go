@@ -1,23 +1,22 @@
-package leaky_test
+package capacitor_test
 
 import (
 	"testing"
 	"time"
 
 	"codeberg.org/matthew/capacitor"
-	"codeberg.org/matthew/capacitor/bucket/leaky"
 	"codeberg.org/matthew/capacitor/internal/testutil"
 
 	"github.com/valkey-io/valkey-go"
 )
 
-func ctor(t *testing.T, client valkey.Client, opts ...capacitor.Option) capacitor.Capacitor {
+func slidingTimeLogCtor(t *testing.T, client valkey.Client, opts ...capacitor.Option) capacitor.Capacitor {
 	t.Helper()
-	return leaky.New(client, leaky.DefaultConfig(), opts...)
+	return capacitor.NewSlidingTimeLog(client, capacitor.NewSlidingTimeLogDefaultConfig(), opts...)
 }
 
-func TestAttempt(t *testing.T) {
-	testutil.RunAttemptCases(t, ctor, map[string]testutil.AttemptCase{
+func TestSlidingTimeLog(t *testing.T) {
+	testutil.RunAttemptCases(t, slidingTimeLogCtor, map[string]testutil.AttemptCase{
 		"empty uid returns error": {
 			UID:            "",
 			MockValkey:     false,
@@ -27,39 +26,39 @@ func TestAttempt(t *testing.T) {
 		"request allowed": {
 			UID:        "user:1",
 			Allowed:    true,
-			Remaining:  9,
+			Remaining:  99,
 			RetryAfter: 0,
 			MockValkey: true,
 			ExpectedResult: capacitor.Result{
 				Allowed:   true,
-				Remaining: 9,
-				Limit:     20,
+				Remaining: 99,
+				Limit:     100,
 			},
 		},
 		"request denied": {
 			UID:        "user:1",
 			Allowed:    false,
 			Remaining:  0,
-			RetryAfter: 1,
+			RetryAfter: 45,
 			MockValkey: true,
 			ExpectedResult: capacitor.Result{
 				Allowed:    false,
 				Remaining:  0,
-				Limit:      20,
-				RetryAfter: 1 * time.Second,
+				Limit:      100,
+				RetryAfter: 45 * time.Second,
 			},
 		},
 	})
 }
 
-func TestAttempt_Fallback(t *testing.T) {
-	testutil.RunFallbackCases(t, ctor, map[string]testutil.FallbackCase{
+func TestSlidingTimeLog_Fallback(t *testing.T) {
+	testutil.RunFallbackCases(t, slidingTimeLogCtor, map[string]testutil.FallbackCase{
 		"fail open on valkey error": {
 			Fallback: capacitor.FallbackFailOpen,
 			ExpectedResult: capacitor.Result{
 				Allowed:   true,
 				Remaining: 0,
-				Limit:     20,
+				Limit:     100,
 			},
 		},
 		"fail closed on valkey error": {
@@ -67,19 +66,19 @@ func TestAttempt_Fallback(t *testing.T) {
 			ExpectedResult: capacitor.Result{
 				Allowed:    false,
 				Remaining:  0,
-				Limit:      20,
-				RetryAfter: 1 * time.Second,
+				Limit:      100,
+				RetryAfter: 60 * time.Second,
 			},
 		},
 	})
 }
 
-func TestAttempt_Metrics(t *testing.T) {
-	testutil.RunMetricsCases(t, ctor, map[string]testutil.MetricsCase{
+func TestSlidingTimeLog_Metrics(t *testing.T) {
+	testutil.RunMetricsCases(t, slidingTimeLogCtor, map[string]testutil.MetricsCase{
 		"allowed records attempt and latency": {
 			UID:             "user:1",
 			Allowed:         true,
-			Remaining:       9,
+			Remaining:       99,
 			RetryAfter:      0,
 			ExpectAttempts:  []string{"user:1"},
 			ExpectDenied:    nil,
@@ -89,7 +88,7 @@ func TestAttempt_Metrics(t *testing.T) {
 			UID:             "user:2",
 			Allowed:         false,
 			Remaining:       0,
-			RetryAfter:      1,
+			RetryAfter:      45,
 			ExpectAttempts:  []string{"user:2"},
 			ExpectDenied:    []string{"user:2"},
 			ExpectLatencies: 1,
