@@ -1,37 +1,27 @@
-// Package counter implements a sliding-window counter
-// rate limiter backed by Valkey. It blends two fixed-window counters
-// using a weighted average to approximate a true sliding window,
-// offering near-exact accuracy with low memory usage.
-package counter
+package capacitor
 
 import (
 	"context"
-	_ "embed"
 	"strconv"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
 
-	"codeberg.org/matthew/capacitor"
 	"codeberg.org/matthew/capacitor/internal/ratelimit"
+	"codeberg.org/matthew/capacitor/internal/scripts"
 )
 
-//go:embed script.lua
-var luaSlidingWindowCounter string
-
-var slidingWindowCounterScript = valkey.NewLuaScript(luaSlidingWindowCounter)
-
-// Config defines the parameters for a sliding-window counter rate limiter.
-type Config struct {
+// SlidingWindowCounterConfig defines the parameters for a sliding-window counter rate limiter.
+type SlidingWindowCounterConfig struct {
 	Limit     int64         // maximum requests per window
 	Window    time.Duration // window duration
 	KeyPrefix string        // Valkey key prefix
 	Timeout   time.Duration // per-operation Valkey timeout
 }
 
-// DefaultConfig returns a Config with sensible defaults for general use.
-func DefaultConfig() Config {
-	return Config{
+// NewSlidingWindowCounterDefaultConfig returns a SlidingWindowCounterConfig with sensible defaults.
+func NewSlidingWindowCounterDefaultConfig() SlidingWindowCounterConfig {
+	return SlidingWindowCounterConfig{
 		Limit:     100,
 		Window:    time.Minute,
 		KeyPrefix: "capacitor:swcounter",
@@ -39,15 +29,15 @@ func DefaultConfig() Config {
 	}
 }
 
-type limiter struct {
+type slidingWindowCounter struct {
 	*ratelimit.Base
-	config Config
+	config SlidingWindowCounterConfig
 }
 
-var _ capacitor.Capacitor = (*limiter)(nil)
+var _ Capacitor = (*slidingWindowCounter)(nil)
 
-// New creates a sliding-window counter Capacitor backed by the given Valkey client.
-func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.Capacitor {
+// NewSlidingWindowCounter creates a sliding-window counter Capacitor backed by the given Valkey client.
+func NewSlidingWindowCounter(client valkey.Client, cfg SlidingWindowCounterConfig, opts ...Option) Capacitor {
 	if cfg.Limit <= 0 {
 		panic("capacitor: slidingwindowcounter: limit must be positive")
 	}
@@ -57,21 +47,20 @@ func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.C
 	if cfg.Timeout <= 0 {
 		panic("capacitor: slidingwindowcounter: timeout must be positive")
 	}
-	return &limiter{
+	return &slidingWindowCounter{
 		Base:   &ratelimit.Base{Client: client, Opts: ratelimit.ApplyOptions(opts)},
 		config: cfg,
 	}
 }
 
-func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, error) {
-	// Record total method wall-clock time, including validation
+func (l *slidingWindowCounter) Attempt(ctx context.Context, uid string) (Result, error) {
 	start := time.Now()
 	if l.Opts.Metrics != nil {
 		defer func() { l.Opts.Metrics.RecordLatency(time.Since(start)) }()
 	}
 
 	if err := l.CheckUID(uid); err != nil {
-		return capacitor.Result{}, err
+		return Result{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, l.config.Timeout)
@@ -90,21 +79,19 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		strconv.FormatFloat(now, 'f', -1, 64),
 	}
 
-	res := slidingWindowCounterScript.Exec(ctx, l.Client, []string{prevKey, currKey}, args)
+	res := scripts.SlidingWindowCounter.Exec(ctx, l.Client, []string{prevKey, currKey}, args)
 	allowedInt, remaining, retryAfterSecs, err := ratelimit.ParseResponse(res, "slidingwindowcounter", l.Opts.Logger, uid)
 	if err != nil {
 		if ratelimit.IsFallbackError(err) {
-			// Fallback result returned directly without recording metrics.
-			// Metrics are only recorded for successful Valkey responses.
-			return capacitor.FallbackResult(l.Opts.Fallback, l.config.Limit, windowSecs), err
+			return FallbackResult(l.Opts.Fallback, l.config.Limit, windowSecs), err
 		}
-		return capacitor.Result{}, err
+		return Result{}, err
 	}
 
 	allowed := allowedInt == 1
 	l.RecordMetrics(uid, allowed)
 
-	return capacitor.Result{
+	return Result{
 		Allowed:    allowed,
 		Remaining:  remaining,
 		Limit:      l.config.Limit,

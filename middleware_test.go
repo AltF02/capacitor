@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"codeberg.org/matthew/capacitor"
-	"codeberg.org/matthew/capacitor/bucket/leaky"
 	"codeberg.org/matthew/capacitor/internal/testutil"
 
 	"github.com/google/go-cmp/cmp"
@@ -86,7 +85,7 @@ func TestKeyFromHeader(t *testing.T) {
 }
 
 func TestMiddleware(t *testing.T) {
-	cfg := leaky.DefaultConfig()
+	cfg := capacitor.NewLeakyBucketDefaultConfig()
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -193,7 +192,7 @@ func TestMiddleware(t *testing.T) {
 					)))
 			}
 
-			limiter := leaky.New(client, cfg, capacitor.WithLogger(slog.Default()))
+			limiter := capacitor.NewLeakyBucket(client, cfg, capacitor.WithLogger(slog.Default()))
 			handler := capacitor.NewMiddleware(limiter, c.opts...)(next)
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -339,20 +338,20 @@ func TestWithProfiles(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			client := mock.NewClient(ctrl)
 
-			defaultCfg := leaky.DefaultConfig()
-			defaultLimiter := leaky.New(client, defaultCfg, capacitor.WithLogger(slog.Default()))
+			defaultCfg := capacitor.NewLeakyBucketDefaultConfig()
+			defaultLimiter := capacitor.NewLeakyBucket(client, defaultCfg, capacitor.WithLogger(slog.Default()))
 
 			var opts []capacitor.MiddlewareOption
 
 			if c.useProfiles {
-				basicLimiter := leaky.New(client, leaky.Config{
+				basicLimiter := capacitor.NewLeakyBucket(client, capacitor.LeakyBucketConfig{
 					Capacity:  5,
 					LeakRate:  1,
 					KeyPrefix: "capacitor:profile:basic",
 					Timeout:   50 * time.Millisecond,
 				}, capacitor.WithLogger(slog.Default()))
 
-				premiumLimiter := leaky.New(client, leaky.Config{
+				premiumLimiter := capacitor.NewLeakyBucket(client, capacitor.LeakyBucketConfig{
 					Capacity:  100,
 					LeakRate:  10,
 					KeyPrefix: "capacitor:profile:premium",
@@ -365,7 +364,8 @@ func TestWithProfiles(t *testing.T) {
 				}))
 			}
 			if c.useClassifier {
-				opts = append(opts,
+				opts = append(
+					opts,
 					capacitor.WithClassifier(func(_ *http.Request) string { return c.profile }),
 				)
 			}

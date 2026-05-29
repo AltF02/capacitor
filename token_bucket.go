@@ -1,37 +1,27 @@
-// Package token implements a token-bucket rate limiter backed
-// by Valkey. Tokens accumulate over time up to a maximum capacity,
-// and each request consumes one token. This allows controlled bursts
-// while enforcing a steady average rate.
-package token
+package capacitor
 
 import (
 	"context"
-	_ "embed"
 	"strconv"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
 
-	"codeberg.org/matthew/capacitor"
 	"codeberg.org/matthew/capacitor/internal/ratelimit"
+	"codeberg.org/matthew/capacitor/internal/scripts"
 )
 
-//go:embed script.lua
-var luaTokenBucket string
-
-var tokenBucketScript = valkey.NewLuaScript(luaTokenBucket)
-
-// Config defines the parameters for a token-bucket rate limiter.
-type Config struct {
+// TokenBucketConfig defines the parameters for a token-bucket rate limiter.
+type TokenBucketConfig struct {
 	Capacity   int64         // maximum number of tokens the bucket can hold
 	RefillRate float64       // tokens refilled per second
 	KeyPrefix  string        // Valkey key prefix
 	Timeout    time.Duration // per-operation Valkey timeout
 }
 
-// DefaultConfig returns a Config with sensible defaults for general use.
-func DefaultConfig() Config {
-	return Config{
+// NewTokenBucketDefaultConfig returns a TokenBucketConfig with sensible defaults.
+func NewTokenBucketDefaultConfig() TokenBucketConfig {
+	return TokenBucketConfig{
 		Capacity:   20,
 		RefillRate: 5,
 		KeyPrefix:  "capacitor:token",
@@ -39,15 +29,15 @@ func DefaultConfig() Config {
 	}
 }
 
-type limiter struct {
+type tokenBucket struct {
 	*ratelimit.Base
-	config Config
+	config TokenBucketConfig
 }
 
-var _ capacitor.Capacitor = (*limiter)(nil)
+var _ Capacitor = (*tokenBucket)(nil)
 
-// New creates a token-bucket Capacitor backed by the given Valkey client.
-func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.Capacitor {
+// NewTokenBucket creates a token-bucket Capacitor backed by the given Valkey client.
+func NewTokenBucket(client valkey.Client, cfg TokenBucketConfig, opts ...Option) Capacitor {
 	if cfg.Capacity <= 0 {
 		panic("capacitor: tokenbucket: capacity must be positive")
 	}
@@ -57,21 +47,20 @@ func New(client valkey.Client, cfg Config, opts ...capacitor.Option) capacitor.C
 	if cfg.Timeout <= 0 {
 		panic("capacitor: tokenbucket: timeout must be positive")
 	}
-	return &limiter{
+	return &tokenBucket{
 		Base:   &ratelimit.Base{Client: client, Opts: ratelimit.ApplyOptions(opts)},
 		config: cfg,
 	}
 }
 
-func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, error) {
-	// Record total method wall-clock time, including validation
+func (l *tokenBucket) Attempt(ctx context.Context, uid string) (Result, error) {
 	start := time.Now()
 	if l.Opts.Metrics != nil {
 		defer func() { l.Opts.Metrics.RecordLatency(time.Since(start)) }()
 	}
 
 	if err := l.CheckUID(uid); err != nil {
-		return capacitor.Result{}, err
+		return Result{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, l.config.Timeout)
@@ -86,21 +75,19 @@ func (l *limiter) Attempt(ctx context.Context, uid string) (capacitor.Result, er
 		strconv.FormatFloat(now, 'f', -1, 64),
 	}
 
-	res := tokenBucketScript.Exec(ctx, l.Client, []string{key}, args)
+	res := scripts.TokenBucket.Exec(ctx, l.Client, []string{key}, args)
 	allowedInt, remaining, retryAfterSecs, err := ratelimit.ParseResponse(res, "tokenbucket", l.Opts.Logger, uid)
 	if err != nil {
 		if ratelimit.IsFallbackError(err) {
-			// Fallback result returned directly without recording metrics.
-			// Metrics are only recorded for successful Valkey responses.
-			return capacitor.FallbackResult(l.Opts.Fallback, l.config.Capacity, 1/l.config.RefillRate), err
+			return FallbackResult(l.Opts.Fallback, l.config.Capacity, 1/l.config.RefillRate), err
 		}
-		return capacitor.Result{}, err
+		return Result{}, err
 	}
 
 	allowed := allowedInt == 1
 	l.RecordMetrics(uid, allowed)
 
-	return capacitor.Result{
+	return Result{
 		Allowed:    allowed,
 		Remaining:  remaining,
 		Limit:      l.config.Capacity,

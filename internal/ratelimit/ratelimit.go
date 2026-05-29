@@ -12,8 +12,71 @@ import (
 
 	"github.com/valkey-io/valkey-go"
 
-	"codeberg.org/matthew/capacitor"
+	"codeberg.org/matthew/capacitor/internal/metrics"
 )
+
+var (
+	// ErrEmptyUID is returned when Attempt is called with an empty uid.
+	ErrEmptyUID = errors.New("capacitor: uid must not be empty")
+	// ErrEvalResponse is returned when the Lua script returns an unexpected result.
+	ErrEvalResponse = errors.New("capacitor: invalid eval response")
+)
+
+// FallbackStrategy determines how the limiter behaves when Valkey is unreachable.
+type FallbackStrategy int
+
+const (
+	// FallbackFailOpen allows requests when Valkey is unreachable.
+	FallbackFailOpen FallbackStrategy = iota
+	// FallbackFailClosed denies requests when Valkey is unreachable.
+	FallbackFailClosed
+)
+
+// String returns the string representation of the FallbackStrategy.
+func (s FallbackStrategy) String() string {
+	switch s {
+	case FallbackFailOpen:
+		return "fail_open"
+	case FallbackFailClosed:
+		return "fail_closed"
+	default:
+		return "unknown"
+	}
+}
+
+// Options holds cross-cutting configuration shared by all algorithm
+// implementations.
+type Options struct {
+	Logger   *slog.Logger
+	Fallback FallbackStrategy
+	Metrics  metrics.MetricsCollector
+}
+
+// DefaultOptions returns Options with sensible defaults.
+func DefaultOptions() Options {
+	return Options{
+		Logger:   slog.Default(),
+		Fallback: FallbackFailOpen,
+	}
+}
+
+// Option configures cross-cutting behavior for any Capacitor implementation.
+type Option func(*Options)
+
+// WithLogger sets the logger used for diagnostics.
+func WithLogger(logger *slog.Logger) Option {
+	return func(o *Options) { o.Logger = logger }
+}
+
+// WithFallback sets the strategy used when Valkey is unreachable.
+func WithFallback(s FallbackStrategy) Option {
+	return func(o *Options) { o.Fallback = s }
+}
+
+// WithMetrics enables telemetry recording via the given collector.
+func WithMetrics(m metrics.MetricsCollector) Option {
+	return func(o *Options) { o.Metrics = m }
+}
 
 // errFallback is the sentinel used to classify errors that should trigger
 // a fallback result. It is unexported; callers use IsFallbackError.
@@ -31,7 +94,7 @@ func IsFallbackError(err error) bool {
 // a limiter struct to promote HealthCheck and Close.
 type Base struct {
 	Client valkey.Client
-	Opts   capacitor.Options
+	Opts   Options
 }
 
 // HealthCheck verifies connectivity to the backing Valkey instance.
@@ -49,7 +112,7 @@ func (b *Base) Close() {
 // CheckUID returns ErrEmptyUID if uid is empty.
 func (b *Base) CheckUID(uid string) error {
 	if uid == "" {
-		return capacitor.ErrEmptyUID
+		return ErrEmptyUID
 	}
 	return nil
 }
@@ -67,8 +130,8 @@ func (b *Base) RecordMetrics(uid string, allowed bool) {
 }
 
 // ApplyOptions applies opts to a default Options value and returns the result.
-func ApplyOptions(opts []capacitor.Option) capacitor.Options {
-	o := capacitor.DefaultOptions()
+func ApplyOptions(opts []Option) Options {
+	o := DefaultOptions()
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -127,7 +190,7 @@ func ParseResponse(
 	}
 	if len(arr) != 3 {
 		logger.Error("unexpected eval response length", "len", len(arr))
-		return 0, 0, 0, fmt.Errorf("%w: capacitor: %s: %w: expected 3 elements, got %d", errFallback, name, capacitor.ErrEvalResponse, len(arr))
+		return 0, 0, 0, fmt.Errorf("%w: capacitor: %s: %w: expected 3 elements, got %d", errFallback, name, ErrEvalResponse, len(arr))
 	}
 
 	allowed, err = arr[0].ToInt64()

@@ -1,40 +1,51 @@
 // Package capacitor provides rate limiting backed by Valkey
-// (Redis-compatible). Algorithm implementations live in sub-packages;
-// all satisfy the Capacitor interface.
+// (Redis-compatible). All algorithm implementations are in this package.
 //
-// Typical usage:
+// Usage:
 //
-//	limiter := leakybucket.New(client, leakybucket.DefaultConfig())
-//	mw := capacitor.NewMiddleware(limiter)
+//	lim := capacitor.NewLeakyBucket(client, capacitor.NewLeakyBucketDefaultConfig())
+//	mw := capacitor.NewMiddleware(lim)
 //	http.Handle("/", mw(myHandler))
 package capacitor
 
 import (
 	"context"
-	"errors"
-	"log/slog"
 	"math"
 	"time"
+
+	"codeberg.org/matthew/capacitor/internal/metrics"
+	"codeberg.org/matthew/capacitor/internal/ratelimit"
 )
 
+// Re-exported types from internal/ratelimit.
+type (
+	Options          = ratelimit.Options
+	Option           = ratelimit.Option
+	FallbackStrategy = ratelimit.FallbackStrategy
+)
+
+// Re-exported types from internal/metrics.
+type MetricsCollector = metrics.MetricsCollector
+
+// Re-exported constants.
+const (
+	FallbackFailOpen   = ratelimit.FallbackFailOpen
+	FallbackFailClosed = ratelimit.FallbackFailClosed
+)
+
+// Re-exported errors.
 var (
-	// ErrEmptyUID is returned when Attempt is called with an empty uid.
-	ErrEmptyUID = errors.New("capacitor: uid must not be empty")
-	// ErrEvalResponse is returned when the Lua script returns an unexpected result.
-	ErrEvalResponse = errors.New("capacitor: invalid eval response")
+	ErrEmptyUID     = ratelimit.ErrEmptyUID
+	ErrEvalResponse = ratelimit.ErrEvalResponse
 )
 
-// Capacitor checks whether a request is allowed under a rate-limiting
-// policy. Implementations must be safe for concurrent use.
-type Capacitor interface {
-	// Attempt checks whether the request identified by uid is allowed.
-	// On Valkey errors it returns a fallback result and the underlying error.
-	Attempt(ctx context.Context, uid string) (Result, error)
-	// HealthCheck verifies connectivity to the backing store.
-	HealthCheck(ctx context.Context) error
-	// Close releases resources held by the Capacitor.
-	Close()
-}
+// Re-exported option constructors.
+var (
+	DefaultOptions = ratelimit.DefaultOptions
+	WithLogger     = ratelimit.WithLogger
+	WithFallback   = ratelimit.WithFallback
+	WithMetrics    = ratelimit.WithMetrics
+)
 
 // Result holds the outcome of a rate-limit check.
 type Result struct {
@@ -44,30 +55,8 @@ type Result struct {
 	RetryAfter time.Duration
 }
 
-// FallbackStrategy determines how the limiter behaves when Valkey is unreachable.
-type FallbackStrategy int
-
-const (
-	// FallbackFailOpen allows requests when Valkey is unreachable.
-	FallbackFailOpen FallbackStrategy = iota
-	// FallbackFailClosed denies requests when Valkey is unreachable.
-	FallbackFailClosed
-)
-
-// String returns the string representation of the FallbackStrategy.
-func (s FallbackStrategy) String() string {
-	switch s {
-	case FallbackFailOpen:
-		return "fail_open"
-	case FallbackFailClosed:
-		return "fail_closed"
-	default:
-		return "unknown"
-	}
-}
-
 // FallbackResult returns a degraded Result based on the given strategy.
-// Algorithm sub-packages call this when Valkey is unreachable.
+// Algorithm implementations call this when Valkey is unreachable.
 func FallbackResult(strategy FallbackStrategy, limit int64, retryAfterSecs float64) Result {
 	if strategy == FallbackFailOpen {
 		return Result{Allowed: true, Remaining: 0, Limit: limit}
@@ -82,36 +71,14 @@ func FallbackResult(strategy FallbackStrategy, limit int64, retryAfterSecs float
 	}
 }
 
-// Options holds cross-cutting configuration shared by all algorithm
-// implementations. Sub-packages embed this in their internal state.
-type Options struct {
-	Logger   *slog.Logger
-	Fallback FallbackStrategy
-	Metrics  MetricsCollector
-}
-
-// DefaultOptions returns Options with sensible defaults.
-func DefaultOptions() Options {
-	return Options{
-		Logger:   slog.Default(),
-		Fallback: FallbackFailOpen,
-	}
-}
-
-// Option configures cross-cutting behavior for any Capacitor implementation.
-type Option func(*Options)
-
-// WithLogger sets the logger used for diagnostics.
-func WithLogger(logger *slog.Logger) Option {
-	return func(o *Options) { o.Logger = logger }
-}
-
-// WithFallback sets the strategy used when Valkey is unreachable.
-func WithFallback(s FallbackStrategy) Option {
-	return func(o *Options) { o.Fallback = s }
-}
-
-// WithMetrics enables telemetry recording via the given collector.
-func WithMetrics(m MetricsCollector) Option {
-	return func(o *Options) { o.Metrics = m }
+// Capacitor checks whether a request is allowed under a rate-limiting
+// policy. Implementations must be safe for concurrent use.
+type Capacitor interface {
+	// Attempt checks whether the request identified by uid is allowed.
+	// On Valkey errors it returns a fallback result and the underlying error.
+	Attempt(ctx context.Context, uid string) (Result, error)
+	// HealthCheck verifies connectivity to the backing store.
+	HealthCheck(ctx context.Context) error
+	// Close releases resources held by the Capacitor.
+	Close()
 }
