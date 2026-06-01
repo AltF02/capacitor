@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/valkey-io/valkey-go"
-
-	"codeberg.org/matthew/capacitor/internal/metrics"
 )
 
 var (
@@ -49,7 +47,6 @@ func (s FallbackStrategy) String() string {
 type Options struct {
 	Logger   *slog.Logger
 	Fallback FallbackStrategy
-	Metrics  metrics.MetricsCollector
 }
 
 // DefaultOptions returns Options with sensible defaults.
@@ -71,11 +68,6 @@ func WithLogger(logger *slog.Logger) Option {
 // WithFallback sets the strategy used when Valkey is unreachable.
 func WithFallback(s FallbackStrategy) Option {
 	return func(o *Options) { o.Fallback = s }
-}
-
-// WithMetrics enables telemetry recording via the given collector.
-func WithMetrics(m metrics.MetricsCollector) Option {
-	return func(o *Options) { o.Metrics = m }
 }
 
 // errFallback is the sentinel used to classify errors that should trigger
@@ -115,18 +107,6 @@ func (b *Base) CheckUID(uid string) error {
 		return ErrEmptyUID
 	}
 	return nil
-}
-
-// RecordMetrics records an attempt and, if denied, a denial via the
-// configured MetricsCollector. It is a no-op when no collector is set.
-func (b *Base) RecordMetrics(uid string, allowed bool) {
-	if b.Opts.Metrics == nil {
-		return
-	}
-	b.Opts.Metrics.RecordAttempt(uid)
-	if !allowed {
-		b.Opts.Metrics.RecordDenied(uid)
-	}
 }
 
 // ApplyOptions applies opts to a default Options value and returns the result.

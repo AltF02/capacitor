@@ -15,6 +15,139 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+func TestMiddleware_Metrics(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	cases := map[string]struct {
+		profile         string
+		allowed         bool
+		remaining       int
+		retryAfter      int
+		attemptErr      bool
+		useProfiles     bool
+		useClassifier   bool
+		expectAttempts  []testutil.MetricRecord
+		expectDenied    []testutil.MetricRecord
+		expectFallbacks []testutil.MetricRecord
+		expectLatencies int
+	}{
+		"default limiter records empty profile": {
+			allowed:         true,
+			remaining:       9,
+			expectAttempts:  []testutil.MetricRecord{{Key: "10.0.0.1", Profile: ""}},
+			expectLatencies: 1,
+		},
+		"named profile records profile label": {
+			profile:         "premium",
+			allowed:         true,
+			remaining:       49,
+			useProfiles:     true,
+			useClassifier:   true,
+			expectAttempts:  []testutil.MetricRecord{{Key: "10.0.0.1", Profile: "premium"}},
+			expectLatencies: 1,
+		},
+		"denied request records denied metric": {
+			profile:         "basic",
+			allowed:         false,
+			remaining:       0,
+			retryAfter:      1,
+			useProfiles:     true,
+			useClassifier:   true,
+			expectAttempts:  []testutil.MetricRecord{{Key: "10.0.0.1", Profile: "basic"}},
+			expectDenied:    []testutil.MetricRecord{{Key: "10.0.0.1", Profile: "basic"}},
+			expectLatencies: 1,
+		},
+		"fallback records fallback metric": {
+			allowed:         true,
+			remaining:       0,
+			attemptErr:      true,
+			expectAttempts:  []testutil.MetricRecord{{Key: "10.0.0.1", Profile: ""}},
+			expectFallbacks: []testutil.MetricRecord{{Key: "10.0.0.1", Profile: ""}},
+			expectLatencies: 1,
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			client := mock.NewClient(ctrl)
+
+			defaultLimiter := capacitor.NewLeakyBucket(
+				client,
+				capacitor.NewLeakyBucketDefaultConfig(),
+				capacitor.WithLogger(slog.Default()),
+			)
+
+			var opts []capacitor.MiddlewareOption
+			metrics := &testutil.MetricsMock{}
+			opts = append(opts, capacitor.WithMetrics(metrics))
+
+			if c.useProfiles {
+				basicLimiter := capacitor.NewLeakyBucket(client, capacitor.LeakyBucketConfig{
+					Capacity:  5,
+					LeakRate:  1,
+					KeyPrefix: "capacitor:profile:basic",
+					Timeout:   50 * time.Millisecond,
+				}, capacitor.WithLogger(slog.Default()))
+
+				premiumLimiter := capacitor.NewLeakyBucket(client, capacitor.LeakyBucketConfig{
+					Capacity:  100,
+					LeakRate:  10,
+					KeyPrefix: "capacitor:profile:premium",
+					Timeout:   50 * time.Millisecond,
+				}, capacitor.WithLogger(slog.Default()))
+
+				opts = append(opts, capacitor.WithProfiles(capacitor.ProfileConfig{
+					"basic":   basicLimiter,
+					"premium": premiumLimiter,
+				}))
+			}
+			if c.useClassifier {
+				opts = append(opts, capacitor.WithClassifier(func(_ *http.Request) string {
+					return c.profile
+				}))
+			}
+
+			if c.attemptErr {
+				client.EXPECT().
+					Do(gomock.Any(), gomock.Any()).
+					Return(mock.Result(mock.ValkeyError("ERR test error")))
+			} else {
+				client.EXPECT().
+					Do(gomock.Any(), gomock.Any()).
+					Return(mock.Result(mock.ValkeyArray(
+						mock.ValkeyInt64(testutil.Btoi(c.allowed)),
+						mock.ValkeyInt64(int64(c.remaining)),
+						mock.ValkeyInt64(int64(c.retryAfter)),
+					)))
+			}
+
+			handler := capacitor.NewMiddleware(defaultLimiter, opts...)(next)
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = "10.0.0.1:1234"
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if diff := cmp.Diff(c.expectAttempts, metrics.Attempts); diff != "" {
+				t.Errorf("attempts mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(c.expectDenied, metrics.Denied); diff != "" {
+				t.Errorf("denied mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(c.expectFallbacks, metrics.Fallbacks); diff != "" {
+				t.Errorf("fallbacks mismatch (-want +got):\n%s", diff)
+			}
+			if metrics.Latencies != c.expectLatencies {
+				t.Errorf("latencies = %d, want %d", metrics.Latencies, c.expectLatencies)
+			}
+		})
+	}
+}
+
 func TestKeyFromRemoteIP(t *testing.T) {
 	cases := map[string]struct {
 		remoteAddr string

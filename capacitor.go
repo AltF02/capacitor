@@ -13,7 +13,6 @@ import (
 	"math"
 	"time"
 
-	"codeberg.org/matthew/capacitor/internal/metrics"
 	"codeberg.org/matthew/capacitor/internal/ratelimit"
 )
 
@@ -23,9 +22,6 @@ type (
 	Option           = ratelimit.Option
 	FallbackStrategy = ratelimit.FallbackStrategy
 )
-
-// Re-exported types from internal/metrics.
-type MetricsCollector = metrics.MetricsCollector
 
 // Re-exported constants.
 const (
@@ -44,7 +40,6 @@ var (
 	DefaultOptions = ratelimit.DefaultOptions
 	WithLogger     = ratelimit.WithLogger
 	WithFallback   = ratelimit.WithFallback
-	WithMetrics    = ratelimit.WithMetrics
 )
 
 // Result holds the outcome of a rate-limit check.

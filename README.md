@@ -1,3 +1,7 @@
+<a href="https://codeberg.org/matthew/capacitor">
+    <img alt="Get it on Codeberg" src="https://codeberg.org/matthew/codeberg-catppuccin/raw/branch/main/codeberg-catppuccin.svg" height="60">
+</a>
+
 # Capacitor
 
 A rate-limiting library for Go, backed by [Valkey](https://valkey.io). Atomic limiting logic runs server-side via Lua scripts, making it safe for distributed deployments. Ships with drop-in `net/http` middleware.
@@ -199,7 +203,19 @@ Pass these to any algorithm's `NewXxx()`:
 |---|---|
 | `WithLogger(logger)` | Structured logger (`*slog.Logger`) |
 | `WithFallback(strategy)` | `FallbackFailOpen` (default) or `FallbackFailClosed` |
-| `WithMetrics(collector)` | Optional `MetricsCollector` implementation |
+
+## Middleware Metrics
+
+Attach metrics collection at the middleware layer:
+
+```go
+rl := capacitor.NewMiddleware(limiter,
+	capacitor.WithMetrics(myCollector),
+)
+```
+
+`MetricsCollector` receives the request key and the matched profile name.
+The default limiter uses `""` as the profile.
 
 ## Response Headers
 
