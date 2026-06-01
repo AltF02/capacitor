@@ -72,26 +72,3 @@ func TestLeakyBucket_Fallback(t *testing.T) {
 		},
 	})
 }
-
-func TestLeakyBucket_Metrics(t *testing.T) {
-	testutil.RunMetricsCases(t, leakyBucketCtor, map[string]testutil.MetricsCase{
-		"allowed records attempt and latency": {
-			UID:             "user:1",
-			Allowed:         true,
-			Remaining:       9,
-			RetryAfter:      0,
-			ExpectAttempts:  []string{"user:1"},
-			ExpectDenied:    nil,
-			ExpectLatencies: 1,
-		},
-		"denied records attempt, denied, and latency": {
-			UID:             "user:2",
-			Allowed:         false,
-			Remaining:       0,
-			RetryAfter:      1,
-			ExpectAttempts:  []string{"user:2"},
-			ExpectDenied:    []string{"user:2"},
-			ExpectLatencies: 1,
-		},
-	})
-}

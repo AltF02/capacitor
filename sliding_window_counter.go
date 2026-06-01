@@ -54,11 +54,6 @@ func NewSlidingWindowCounter(client valkey.Client, cfg SlidingWindowCounterConfi
 }
 
 func (l *slidingWindowCounter) Attempt(ctx context.Context, uid string) (Result, error) {
-	start := time.Now()
-	if l.Opts.Metrics != nil {
-		defer func() { l.Opts.Metrics.RecordLatency(time.Since(start)) }()
-	}
-
 	if err := l.CheckUID(uid); err != nil {
 		return Result{}, err
 	}
@@ -88,11 +83,8 @@ func (l *slidingWindowCounter) Attempt(ctx context.Context, uid string) (Result,
 		return Result{}, err
 	}
 
-	allowed := allowedInt == 1
-	l.RecordMetrics(uid, allowed)
-
 	return Result{
-		Allowed:    allowed,
+		Allowed:    allowedInt == 1,
 		Remaining:  remaining,
 		Limit:      l.config.Limit,
 		RetryAfter: time.Duration(retryAfterSecs) * time.Second,

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // KeyFunc extracts the rate-limit key from an incoming request.
@@ -30,6 +31,7 @@ type middleware struct {
 	profiles    ProfileConfig
 	classifier  ClassifyFunc
 	logger      *slog.Logger
+	metrics     MetricsCollector
 }
 
 // WithKeyFunc sets the function used to derive the rate-limit key.
@@ -41,6 +43,11 @@ func WithKeyFunc(fn KeyFunc) MiddlewareOption {
 // WithDenyHandler replaces the default 429 response handler.
 func WithDenyHandler(h http.Handler) MiddlewareOption {
 	return func(m *middleware) { m.denyHandler = h }
+}
+
+// WithMetrics enables telemetry recording via the given collector.
+func WithMetrics(mc MetricsCollector) MiddlewareOption {
+	return func(m *middleware) { m.metrics = mc }
 }
 
 // WithProfiles configures per-profile limiters. Combine with
@@ -56,18 +63,20 @@ func WithClassifier(fn ClassifyFunc) MiddlewareOption {
 	return func(m *middleware) { m.classifier = fn }
 }
 
-func (m *middleware) resolve(r *http.Request) Capacitor {
+// resolve returns the limiter selected for the request and its profile name.
+// The default limiter returns an empty profile name.
+func (m *middleware) resolve(r *http.Request) (Capacitor, string) {
 	if m.classifier == nil {
-		return m.limiter
+		return m.limiter, ""
 	}
 	name := m.classifier(r)
 	if name == "" {
-		return m.limiter
+		return m.limiter, ""
 	}
 	if lim, ok := m.profiles[name]; ok {
-		return lim
+		return lim, name
 	}
-	return m.limiter
+	return m.limiter, ""
 }
 
 // KeyFromRemoteIP extracts the IP from RemoteAddr, stripping the port.
@@ -108,12 +117,24 @@ func NewMiddleware(limiter Capacitor, opts ...MiddlewareOption) func(http.Handle
 				return
 			}
 
-			lim := m.resolve(r)
+			lim, profile := m.resolve(r)
 
+			start := time.Now()
 			result, err := lim.Attempt(r.Context(), key)
 			if err != nil {
 				m.logger.Warn("rate limiter degraded, using fallback",
 					"error", err, "key", key)
+			}
+
+			if m.metrics != nil {
+				m.metrics.RecordLatency(time.Since(start), profile)
+				m.metrics.RecordAttempt(key, profile)
+				if err != nil {
+					m.metrics.RecordFallback(key, profile)
+				}
+				if !result.Allowed {
+					m.metrics.RecordDenied(key, profile)
+				}
 			}
 
 			result.writeHeaders(w)

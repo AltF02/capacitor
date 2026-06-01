@@ -72,26 +72,3 @@ func TestSlidingWindowCounter_Fallback(t *testing.T) {
 		},
 	})
 }
-
-func TestSlidingWindowCounter_Metrics(t *testing.T) {
-	testutil.RunMetricsCases(t, slidingWindowCounterCtor, map[string]testutil.MetricsCase{
-		"allowed records attempt and latency": {
-			UID:             "user:1",
-			Allowed:         true,
-			Remaining:       99,
-			RetryAfter:      0,
-			ExpectAttempts:  []string{"user:1"},
-			ExpectDenied:    nil,
-			ExpectLatencies: 1,
-		},
-		"denied records attempt, denied, and latency": {
-			UID:             "user:2",
-			Allowed:         false,
-			Remaining:       0,
-			RetryAfter:      45,
-			ExpectAttempts:  []string{"user:2"},
-			ExpectDenied:    []string{"user:2"},
-			ExpectLatencies: 1,
-		},
-	})
-}

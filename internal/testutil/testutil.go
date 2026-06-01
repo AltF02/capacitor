@@ -22,17 +22,34 @@ func Btoi(b bool) int64 {
 	return 0
 }
 
+// MetricRecord captures a metrics call for assertion in tests.
+type MetricRecord struct {
+	Key     string
+	Profile string
+}
+
 // MetricsMock implements capacitor.MetricsCollector and records all calls
 // for assertion in tests.
 type MetricsMock struct {
-	Attempts  []string
-	Denied    []string
+	Attempts  []MetricRecord
+	Denied    []MetricRecord
+	Fallbacks []MetricRecord
 	Latencies int
 }
 
-func (m *MetricsMock) RecordAttempt(key string)      { m.Attempts = append(m.Attempts, key) }
-func (m *MetricsMock) RecordDenied(key string)       { m.Denied = append(m.Denied, key) }
-func (m *MetricsMock) RecordLatency(_ time.Duration) { m.Latencies++ }
+func (m *MetricsMock) RecordAttempt(key, profile string) {
+	m.Attempts = append(m.Attempts, MetricRecord{Key: key, Profile: profile})
+}
+
+func (m *MetricsMock) RecordDenied(key, profile string) {
+	m.Denied = append(m.Denied, MetricRecord{Key: key, Profile: profile})
+}
+
+func (m *MetricsMock) RecordFallback(key, profile string) {
+	m.Fallbacks = append(m.Fallbacks, MetricRecord{Key: key, Profile: profile})
+}
+
+func (m *MetricsMock) RecordLatency(_ time.Duration, _ string) { m.Latencies++ }
 
 // Constructor is a function that creates a Capacitor from a Valkey client
 // and optional options. Test runners pass per-case options (e.g. WithFallback)
@@ -102,7 +119,8 @@ func RunFallbackCases(t *testing.T, ctor Constructor, cases map[string]FallbackC
 				Do(gomock.Any(), gomock.Any()).
 				Return(mock.Result(mock.ValkeyError("ERR test error")))
 
-			lim := ctor(t, client,
+			lim := ctor(
+				t, client,
 				capacitor.WithFallback(c.Fallback),
 				capacitor.WithLogger(slog.Default()),
 			)
@@ -113,53 +131,6 @@ func RunFallbackCases(t *testing.T, ctor Constructor, cases map[string]FallbackC
 			}
 			if diff := cmp.Diff(c.ExpectedResult, got); diff != "" {
 				t.Errorf("Result mismatch (-want +got):\n%s", diff)
-			}
-		})
-	}
-}
-
-// MetricsCase describes a single metrics recording test case.
-type MetricsCase struct {
-	UID             string
-	Allowed         bool
-	Remaining       int
-	RetryAfter      int
-	ExpectAttempts  []string
-	ExpectDenied    []string
-	ExpectLatencies int
-}
-
-// RunMetricsCases runs a table of MetricsCase subtests. Each subtest injects
-// a MetricsMock and asserts recorded attempts, denials, and latency counts.
-func RunMetricsCases(t *testing.T, ctor Constructor, cases map[string]MetricsCase) {
-	t.Helper()
-	for name, c := range cases {
-		t.Run(name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			client := mock.NewClient(ctrl)
-
-			client.EXPECT().
-				Do(gomock.Any(), gomock.Any()).
-				Return(mock.Result(mock.ValkeyArray(
-					mock.ValkeyInt64(Btoi(c.Allowed)),
-					mock.ValkeyInt64(int64(c.Remaining)),
-					mock.ValkeyInt64(int64(c.RetryAfter)),
-				)))
-
-			m := &MetricsMock{}
-			lim := ctor(t, client, capacitor.WithMetrics(m))
-			if _, err := lim.Attempt(t.Context(), c.UID); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if diff := cmp.Diff(c.ExpectAttempts, m.Attempts); diff != "" {
-				t.Errorf("attempts mismatch (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(c.ExpectDenied, m.Denied); diff != "" {
-				t.Errorf("denied mismatch (-want +got):\n%s", diff)
-			}
-			if m.Latencies != c.ExpectLatencies {
-				t.Errorf("latencies = %d, want %d", m.Latencies, c.ExpectLatencies)
 			}
 		})
 	}
